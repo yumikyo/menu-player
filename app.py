@@ -67,17 +67,10 @@ with st.sidebar:
     rate_value = speed_options[selected_speed_label]
 
 # ==========================================
-# 2. メイン画面
+# 2. メイン画面レイアウト
 # ==========================================
 st.title("🎧 Menu Player Generator")
 st.markdown("##### 視覚障害のある方のための「聴くメニュー」生成アプリ")
-
-# --- 店舗情報の入力フォーム ---
-col1, col2 = st.columns(2)
-with col1:
-    store_name = st.text_input("🏠 店舗名（必須）", placeholder="例：カフェタナカ")
-with col2:
-    menu_title = st.text_input("📖 今回のメニュー名（任意）", placeholder="例：冬のランチメニュー")
 
 # --- セッション状態の初期化 ---
 if 'captured_images' not in st.session_state:
@@ -86,42 +79,68 @@ if 'camera_key' not in st.session_state:
     st.session_state.camera_key = 0
 if 'generated_result' not in st.session_state:
     st.session_state.generated_result = None
-# ★カメラの表示・非表示を管理するスイッチ
 if 'show_camera' not in st.session_state:
     st.session_state.show_camera = False
 
-# --- 入力モードの切り替えタブ ---
-tab_in1, tab_in2 = st.tabs(["📸 画像・カメラ", "🌐 Webリンク"])
+# ----------------------------------------
+# ステップ1：お店情報の入力
+# ----------------------------------------
+st.markdown("### 1. お店情報の入力")
+col1, col2 = st.columns(2)
+with col1:
+    store_name = st.text_input("🏠 店舗名（必須）", placeholder="例：カフェタナカ")
+with col2:
+    menu_title = st.text_input("📖 今回のメニュー名（任意）", placeholder="例：冬のランチメニュー")
+
+st.markdown("---")
+
+# ----------------------------------------
+# ステップ2：入力方法の選択（ラジオボタン）
+# ----------------------------------------
+st.markdown("### 2. メニューの登録方法を選ぶ")
+
+input_method = st.radio(
+    "どの方法でメニューを登録しますか？",
+    ("📂 アルバムから写真を選択", "📷 その場で写真を撮影", "🌐 お店のURLを入力"),
+    horizontal=True
+)
 
 final_image_list = []
 target_url = None
 
-with tab_in1:
-    st.markdown("### 1. アルバムから選択")
+st.write("") # 余白
+
+# --- 選択されたモードごとの画面表示 ---
+
+if input_method == "📂 アルバムから写真を選択":
+    st.info("スマホやPCに保存されているメニューの写真を選んでください。")
     uploaded_files = st.file_uploader(
-        "スマホ内の写真を選択", 
+        "ここをタップして写真を選択", 
         type=['png', 'jpg', 'jpeg'], 
         accept_multiple_files=True
     )
+    if uploaded_files:
+        final_image_list.extend(uploaded_files)
+
+elif input_method == "📷 その場で写真を撮影":
+    st.info("メニュー表をカメラで撮影します。複数枚の連続撮影も可能です。")
     
-    st.markdown("### 2. その場で撮影（連続撮影可能）")
-    
-    # ★ここを変更：カメラの表示スイッチ機能★
+    # カメラ起動/停止ロジック
     if not st.session_state.show_camera:
-        # カメラがOFFのとき -> 起動ボタンを表示
-        if st.button("📷 カメラを起動する"):
+        # OFFの時：起動ボタン
+        if st.button("📷 カメラを起動する", type="primary"):
             st.session_state.show_camera = True
             st.rerun()
     else:
-        # カメラがONのとき -> 停止ボタンとカメラ入力を表示
+        # ONの時：停止ボタンとカメラ
         if st.button("❌ カメラを閉じる"):
             st.session_state.show_camera = False
             st.rerun()
             
-        st.info("撮影したら下に表示される「追加ボタン」を押してください")
+        st.write("▼ シャッターを押した後、下の「追加」ボタンを押してください")
         
-        # カメラ入力
-        camera_file = st.camera_input("シャッターを押す", key=f"camera_{st.session_state.camera_key}")
+        # カメラ入力（keyを使ってリフレッシュ）
+        camera_file = st.camera_input("撮影", key=f"camera_{st.session_state.camera_key}")
 
         if camera_file:
             if st.button("⬇️ この写真を追加して次を撮る", type="primary"):
@@ -129,31 +148,30 @@ with tab_in1:
                 st.session_state.camera_key += 1
                 st.rerun()
 
-    # --- 画像リストの整理 ---
-    if uploaded_files:
-        final_image_list.extend(uploaded_files)
+    # 撮影済み画像の表示
     if st.session_state.captured_images:
         final_image_list.extend(st.session_state.captured_images)
-    
-    # リセットボタン
-    if st.session_state.captured_images:
-        st.divider()
+        st.success(f"現在 {len(st.session_state.captured_images)} 枚の写真がリストに入っています")
+        
         if st.button("🗑️ 撮影した写真を全てクリア"):
             st.session_state.captured_images = []
             st.rerun()
 
-    # プレビュー表示
-    if final_image_list:
-        st.success(f"現在 {len(final_image_list)} 枚の画像がセットされています")
-        cols = st.columns(len(final_image_list))
-        for idx, img in enumerate(final_image_list):
-            if idx < 5:
-                with cols[idx]:
-                    st.image(img, caption=f"No.{idx+1}", use_container_width=True)
-
-with tab_in2:
+elif input_method == "🌐 お店のURLを入力":
     st.info("お店のホームページや、食べログ等のメニューページのURLを入力してください。")
     target_url = st.text_input("URLを入力", placeholder="https://...")
+
+
+# --- プレビューエリア（共通） ---
+if final_image_list:
+    st.markdown("###### ▼ 登録する画像の確認")
+    cols = st.columns(len(final_image_list))
+    for idx, img in enumerate(final_image_list):
+        if idx < 5: # 画面幅的に5枚まで表示
+            with cols[idx]:
+                st.image(img, caption=f"No.{idx+1}", use_container_width=True)
+
+st.markdown("---")
 
 # ==========================================
 # 3. 音声生成ロジック
@@ -191,8 +209,13 @@ def fetch_text_from_url(url):
     except Exception as e:
         return None
 
-# --- 生成ボタン処理 ---
-if st.button("🎙️ 音声メニューを作成する"):
+# ----------------------------------------
+# ステップ3：作成ボタン
+# ----------------------------------------
+st.markdown("### 3. 音声メニューの作成")
+
+if st.button("🎙️ 音声メニューを作成する", type="primary", use_container_width=True):
+    # バリデーション
     if not api_key or not target_model_name:
         st.error("設定を確認してください（APIキーまたはモデル）")
         st.stop()
@@ -204,7 +227,7 @@ if st.button("🎙️ 音声メニューを作成する"):
     has_url = bool(target_url)
 
     if not has_images and not has_url:
-        st.warning("⚠️ 画像かURLを入力してください")
+        st.warning("⚠️ 画像を選択するか、URLを入力してください")
         st.stop()
 
     output_dir = os.path.abspath("menu_audio_album")
@@ -318,6 +341,7 @@ if st.button("🎙️ 音声メニューを作成する"):
                     for file in files:
                         zipf.write(os.path.join(root, file), file)
 
+            # 結果保存
             st.session_state.generated_result = {
                 "zip_path": zip_path,
                 "zip_name": zip_filename,
