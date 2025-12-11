@@ -16,6 +16,7 @@ import requests
 from bs4 import BeautifulSoup
 import edge_tts
 import streamlit.components.v1 as components
+from PIL import Image
 
 # 非同期処理の適用
 nest_asyncio.apply()
@@ -159,7 +160,7 @@ def render_preview_player(tracks):
     function tg(){if(au.paused){au.play();pb.innerText="⏸";}else{au.pause();pb.innerText="▶";}}
     function nx(){if(x<pl.length-1){ld(x+1);au.play();pb.innerText="⏸";}}
     function pv(){if(x>0){ld(x-1);au.play();pb.innerText="⏸";}}
-    function sp(){au.playbackRate=parseFloat(document.getElementById('sp').value);}
+    function sp(){au.playbackRate=parseFloat(document.getElementById('sp').value);}}
     au.onended=function(){if(x<pl.length-1)nx();else pb.innerText="▶";};
     function rn(){ls.innerHTML="";pl.forEach((t,i)=>{const d=document.createElement('div');d.className="it "+(i===x?"active":"");d.innerText=(i+1)+". "+t.title;d.onclick=()=>{ld(i);au.play();pb.innerText="⏸";};ls.appendChild(d);});}
     init();</script></body></html>"""
@@ -277,12 +278,17 @@ elif input_method == "📷 その場で撮影":
 elif input_method == "🌐 URL入力":
     target_url = st.text_input("URL", placeholder="https://...")
 
+# 【修正済み】画像確認エリア（枚数制限を解除し、5枚ごとに折り返し表示）
 if input_method == "📂 アルバムから" and final_image_list:
     st.markdown("###### ▼ 画像確認")
-    cols = st.columns(len(final_image_list))
-    for idx, img in enumerate(final_image_list):
-        if idx < 5:
-            with cols[idx]: st.image(img, caption=f"No.{idx+1}", use_container_width=True)
+    cols_per_row = 5
+    # 画像を5枚ずつのチャンクに分けて表示
+    for i in range(0, len(final_image_list), cols_per_row):
+        cols = st.columns(cols_per_row)
+        batch = final_image_list[i:i+cols_per_row]
+        for j, img in enumerate(batch):
+            with cols[j]:
+                st.image(img, caption=f"No.{i+j+1}", use_container_width=True)
 st.markdown("---")
 
 # Step 3
@@ -303,9 +309,7 @@ if st.button("🎙️ 作成開始", type="primary", use_container_width=True):
             model = genai.GenerativeModel(target_model_name)
             parts = []
             
-            # ----------------------------------------------------------------
-            # 【ここを修正】カテゴリーをまとめるためのプロンプトを強化
-            # ----------------------------------------------------------------
+            # カテゴリーをまとめるためのプロンプト
             prompt = """
             あなたは視覚障害者のためのメニュー読み上げデータ作成のプロです。
             メニューの内容を解析し、聞きやすいように【5つ〜8つ程度の大きなカテゴリー】に分類してまとめてください。
@@ -321,7 +325,6 @@ if st.button("🎙️ 作成開始", type="primary", use_container_width=True):
               {"title": "カテゴリー名（例：メイン料理）", "text": "読み上げ文（例：続いてメインです。ハンバーグ定食1200円。ステーキ1500円。）"}
             ]
             """
-            # ----------------------------------------------------------------
             
             if final_image_list:
                 parts.append(prompt)
