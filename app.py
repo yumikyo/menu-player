@@ -5,6 +5,8 @@ import subprocess
 import asyncio
 import json
 import nest_asyncio
+import time
+import shutil
 from gtts import gTTS
 
 # ==========================================
@@ -27,14 +29,12 @@ st.set_page_config(page_title="Menu Player", layout="wide")
 with st.sidebar:
     st.header("🔧 設定")
     
-    # Secrets(金庫)のキー確認
     if "GEMINI_API_KEY" in st.secrets:
         api_key = st.secrets["GEMINI_API_KEY"]
         st.success("🔑 APIキー認証済み")
     else:
         api_key = st.text_input("Gemini APIキー", type="password")
     
-    # モデル自動取得
     valid_models = []
     target_model_name = None
     
@@ -54,21 +54,17 @@ with st.sidebar:
 
     st.divider()
     
-    # 🗣️ 音声の設定（ここにスピード調整を追加）
     st.subheader("🗣️ 音声設定")
-    
     voice_options = {"女性（七海）": "ja-JP-NanamiNeural", "男性（慶太）": "ja-JP-KeitaNeural"}
     selected_voice = st.selectbox("声の種類", list(voice_options.keys()))
     voice_code = voice_options[selected_voice]
     
-    # スピード選択（デフォルトを1.4倍に設定）
     speed_options = {
         "標準 (±0%)": "+0%", 
         "少し速く (1.2倍)": "+20%", 
         "サクサク (1.4倍/推奨)": "+40%", 
         "爆速 (2.0倍)": "+100%"
     }
-    # デフォルトで「サクサク (1.4倍)」が選ばれるように index=2 を指定
     selected_speed_label = st.selectbox("読み上げ速度", list(speed_options.keys()), index=2)
     rate_value = speed_options[selected_speed_label]
 
@@ -92,24 +88,32 @@ if uploaded_files:
 # 4. 音声生成ロジック
 # ==========================================
 async def generate_audio_safe(text, filename, voice_code, rate_value):
+    for attempt in range(3):
+        try:
+            comm = edge_tts.Communicate(text, voice_code, rate=rate_value)
+            await comm.save(filename)
+            return "EdgeTTS"
+        except Exception as e:
+            time.sleep(2)
+            
     try:
-        # メイン音声（EdgeTTS）に速度(rate)を適用
-        comm = edge_tts.Communicate(text, voice_code, rate=rate_value)
-        await comm.save(filename)
-        return "EdgeTTS"
-    except Exception as e:
-        # 予備音声（GoogleTTS）は速度調整が難しいため標準速度のまま
-        # ※あくまで緊急用のため
-        print(f"Fallback to gTTS: {e}")
         tts = gTTS(text=text, lang='ja')
         tts.save(filename)
         return "GoogleTTS"
+    except:
+        return "Error"
 
 if st.button("🎙️ 音声メニューを作成する"):
     if not api_key or not target_model_name:
         st.error("設定を確認してください（APIキーまたはモデル）")
     else:
-        with st.spinner('AIがメニューを読んでいます...'):
+        # 保存用の一時フォルダを作成
+        output_dir = "menu_audio_album"
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir)
+        os.makedirs(output_dir)
+
+        with st.spinner('AIがメニューを読んでいます...（完了後にダウンロードボタンが出ます）'):
             try:
                 genai.configure(api_key=api_key)
                 model = genai.GenerativeModel(target_model_name)
@@ -120,8 +124,10 @@ if st.button("🎙️ 音声メニューを作成する"):
                 提供された画像を解析し、以下のJSON形式のみを出力してください。
                 価格は「円」まで読み上げ、カテゴリー分けをしてください。
                 Markdown記法は不要です。
-                [{"title": "トラック1：店名・挨拶", "text": "..."}]
+                [{"title": "はじめに", "text": "..."}] 
                 """
+                # ↑タイトルに「トラック1」と入れなくてOK（後で自動で番号を振ります）
+                
                 content_parts.append(prompt)
                 for f in uploaded_files:
                     content_parts.append({"mime_type": f.type, "data": f.getvalue()})
@@ -133,21 +139,42 @@ if st.button("🎙️ 音声メニューを作成する"):
                 end = text_resp.rfind(']') + 1
                 menu_data = json.loads(text_resp[start:end])
                 
-                st.success(f"✅ 完成！ {len(menu_data)}個のカテゴリーに分けました。")
-
+                st.success(f"✅ 完成！ {len(menu_data)}個のトラックを作成しました。")
+                
+                progress_bar = st.progress(0)
+                
                 for i, track in enumerate(menu_data):
-                    st.subheader(f"🎵 {track['title']}")
+                    # ファイル名を "01_はじめに.mp3" のように整形して、並び順を保証する
+                    track_number = f"{i+1:02}" # 01, 02...
+                    safe_title = track['title'].replace("/", "_").replace(" ", "_") # ファイル名に使えない文字を消す
+                    filename = f"{track_number}_{safe_title}.mp3"
+                    save_path = os.path.join(output_dir, filename)
+                    
+                    st.subheader(f"🎵 Track {i+1}: {track['title']}")
                     st.write(track['text'])
-                    fname = f"track_{i+1}.mp3"
                     
-                    # 速度パラメータを渡して生成
-                    method = asyncio.run(generate_audio_safe(track['text'], fname, voice_code, rate_value))
+                    method = asyncio.run(generate_audio_safe(track['text'], save_path, voice_code, rate_value))
                     
-                    st.audio(fname)
-                    if method == "GoogleTTS":
-                        st.caption("※通信混雑のため、予備音声（標準速度）で再生します")
+                    st.audio(save_path)
+                    
+                    time.sleep(1)
+                    progress_bar.progress((i + 1) / len(menu_data))
+
+                # ==========================================
+                # ZIPファイルの作成とダウンロードボタン
+                # ==========================================
+                shutil.make_archive("menu_album", 'zip', output_dir)
+                
+                with open("menu_album.zip", "rb") as fp:
+                    st.download_button(
+                        label="📥 アルバムをまとめてダウンロード (ZIP)",
+                        data=fp,
+                        file_name="menu_audio_album.zip",
+                        mime="application/zip"
+                    )
+                
+                st.info("👆 このボタンを押してZIPファイルをダウンロードし、スマホなどで解凍すると、CDのように連続再生できます。")
 
             except Exception as e:
                 st.error("エラーが発生しました")
                 st.write(f"詳細: {e}")
-            
