@@ -160,7 +160,7 @@ def render_preview_player(tracks):
     function tg(){if(au.paused){au.play();pb.innerText="⏸";}else{au.pause();pb.innerText="▶";}}
     function nx(){if(x<pl.length-1){ld(x+1);au.play();pb.innerText="⏸";}}
     function pv(){if(x>0){ld(x-1);au.play();pb.innerText="⏸";}}
-    function sp(){au.playbackRate=parseFloat(document.getElementById('sp').value);}}
+    function sp(){au.playbackRate=parseFloat(document.getElementById('sp').value);}
     au.onended=function(){if(x<pl.length-1)nx();else pb.innerText="▶";};
     function rn(){ls.innerHTML="";pl.forEach((t,i)=>{const d=document.createElement('div');d.className="it "+(i===x?"active":"");d.innerText=(i+1)+". "+t.title;d.onclick=()=>{ld(i);au.play();pb.innerText="⏸";};ls.appendChild(d);});}
     init();</script></body></html>"""
@@ -278,11 +278,10 @@ elif input_method == "📷 その場で撮影":
 elif input_method == "🌐 URL入力":
     target_url = st.text_input("URL", placeholder="https://...")
 
-# 【修正済み】画像確認エリア（枚数制限を解除し、5枚ごとに折り返し表示）
+# 画像確認エリア（枚数制限を解除し、5枚ごとに折り返し表示）
 if input_method == "📂 アルバムから" and final_image_list:
     st.markdown("###### ▼ 画像確認")
     cols_per_row = 5
-    # 画像を5枚ずつのチャンクに分けて表示
     for i in range(0, len(final_image_list), cols_per_row):
         cols = st.columns(cols_per_row)
         batch = final_image_list[i:i+cols_per_row]
@@ -309,7 +308,6 @@ if st.button("🎙️ 作成開始", type="primary", use_container_width=True):
             model = genai.GenerativeModel(target_model_name)
             parts = []
             
-            # カテゴリーをまとめるためのプロンプト
             prompt = """
             あなたは視覚障害者のためのメニュー読み上げデータ作成のプロです。
             メニューの内容を解析し、聞きやすいように【5つ〜8つ程度の大きなカテゴリー】に分類してまとめてください。
@@ -371,9 +369,15 @@ if st.button("🎙️ 作成開始", type="primary", use_container_width=True):
                 for root, dirs, files in os.walk(output_dir):
                     for file in files: z.write(os.path.join(root, file), file)
 
+            # 【修正点】ZIPファイルをメモリに読み込んでから保存する
+            with open(zip_path, "rb") as f:
+                zip_data = f.read()
+
             st.session_state.generated_result = {
-                "zip_path": zip_path, "zip_name": zip_name,
-                "html_content": html_str, "html_name": f"{s_name}_player.html",
+                "zip_data": zip_data, # 実データを保存
+                "zip_name": zip_name,
+                "html_content": html_str, 
+                "html_name": f"{s_name}_player.html",
                 "tracks": generated_tracks
             }
             st.balloons()
@@ -397,4 +401,5 @@ if st.session_state.generated_result:
     with c_w:
         st.download_button(f"🌐 Webプレイヤー ({res['html_name']})", res['html_content'], res['html_name'], "text/html")
     with c_z:
-        st.download_button(f"📦 ZIPファイル ({res['zip_name']})", open(res["zip_path"], "rb"), res['zip_name'], "application/zip")
+        # 【修正点】ファイルパスではなく、メモリ上のデータ(zip_data)を渡す
+        st.download_button(f"📦 ZIPファイル ({res['zip_name']})", data=res["zip_data"], file_name=res['zip_name'], mime="application/zip")
