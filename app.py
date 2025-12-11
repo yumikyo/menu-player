@@ -1,7 +1,5 @@
 import streamlit as st
 import os
-import sys
-import subprocess
 import asyncio
 import json
 import nest_asyncio
@@ -11,34 +9,20 @@ import zipfile
 import re
 from datetime import datetime
 from gtts import gTTS
-
-# ==========================================
-# 1. 準備：ライブラリの強制ロード
-# ==========================================
-# 必要なライブラリをリストアップ
-required_packages = [
-    ("google-generativeai", "0.8.3"),
-    ("requests", "2.31.0"),
-    ("beautifulsoup4", "4.12.0")
-]
-
-for package, version in required_packages:
-    try:
-        __import__(package.replace("-", "_").split(">")[0]) # 簡易チェック
-    except ImportError:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", f"{package}>={version}"])
-
 import google.generativeai as genai
 from google.api_core import exceptions
 import requests
 from bs4 import BeautifulSoup
 import edge_tts
 
+# 非同期処理の適用
 nest_asyncio.apply()
+
+# ページ設定
 st.set_page_config(page_title="Menu Player Generator", layout="wide")
 
 # ==========================================
-# 2. サイドバー設定
+# 1. サイドバー設定
 # ==========================================
 with st.sidebar:
     st.header("🔧 設定")
@@ -84,7 +68,7 @@ with st.sidebar:
     rate_value = speed_options[selected_speed_label]
 
 # ==========================================
-# 3. メイン画面
+# 2. メイン画面
 # ==========================================
 st.title("🎧 Menu Player Generator")
 st.markdown("##### 視覚障害のある方のための「聴くメニュー」生成アプリ")
@@ -116,7 +100,7 @@ with tab2:
     target_url = st.text_input("URLを入力", placeholder="https://...")
 
 # ==========================================
-# 4. 音声生成ロジック
+# 3. 音声生成ロジック
 # ==========================================
 async def generate_audio_safe(text, filename, voice_code, rate_value):
     # 3回リトライ
@@ -247,7 +231,7 @@ if st.button("🎙️ 音声メニューを作成する"):
 
             text_resp = response.text
             
-            # JSON部分の抽出（余計な文字が含まれる場合の対策）
+            # JSON部分の抽出
             start = text_resp.find('[')
             end = text_resp.rfind(']') + 1
             if start == -1 or end == 0:
@@ -287,7 +271,7 @@ if st.button("🎙️ 音声メニューを作成する"):
                 method = asyncio.run(generate_audio_safe(track['text'], save_path, voice_code, rate_value))
                 
                 if os.path.exists(save_path) and os.path.getsize(save_path) > 0:
-                    pass # 成功
+                    pass
                 else:
                     st.error(f"Track {i+1} の生成に失敗しました")
                 
