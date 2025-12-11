@@ -46,7 +46,6 @@ def fetch_text_from_url(url):
 
 # 音声生成（単体）
 async def generate_single_track(text, filename, voice_code, rate_value):
-    # EdgeTTS (非同期)
     for attempt in range(3):
         try:
             comm = edge_tts.Communicate(text, voice_code, rate=rate_value)
@@ -54,9 +53,7 @@ async def generate_single_track(text, filename, voice_code, rate_value):
             if os.path.exists(filename) and os.path.getsize(filename) > 0:
                 return True
         except:
-            await asyncio.sleep(1) # async sleep
-    
-    # GoogleTTS (同期処理なのでスレッドに逃がす) fallback
+            await asyncio.sleep(1)
     try:
         def gtts_task():
             tts = gTTS(text=text, lang='ja')
@@ -66,32 +63,24 @@ async def generate_single_track(text, filename, voice_code, rate_value):
     except:
         return False
 
-# 一括生成マネージャー（ここが高速化のキモ！）
+# 一括生成マネージャー
 async def process_all_tracks_parallel(menu_data, output_dir, voice_code, rate_value, progress_bar):
     tasks = []
     track_info_list = []
 
-    # タスクの準備
     for i, track in enumerate(menu_data):
         safe_title = sanitize_filename(track['title'])
         filename = f"{i+1:02}_{safe_title}.mp3"
         save_path = os.path.join(output_dir, filename)
         
-        # 読み上げテキストの加工
         speech_text = track['text']
         if i > 0: speech_text = f"{i+1}、{track['title']}。\n{track['text']}"
         
-        # タスクリストに追加（まだ実行しない）
         tasks.append(generate_single_track(speech_text, save_path, voice_code, rate_value))
-        
-        # 結果用データ
         track_info_list.append({"title": track['title'], "path": save_path})
 
-    # 並列実行と進捗表示
     total = len(tasks)
     completed = 0
-    
-    # as_completedで「終わったものから順に」処理
     for task in asyncio.as_completed(tasks):
         await task
         completed += 1
@@ -203,7 +192,6 @@ with st.sidebar:
 st.title("🎧 Menu Player Generator")
 st.markdown("##### 視覚障害のある方のための「聴くメニュー」生成アプリ")
 
-# State
 if 'captured_images' not in st.session_state: st.session_state.captured_images = []
 if 'camera_key' not in st.session_state: st.session_state.camera_key = 0
 if 'generated_result' not in st.session_state: st.session_state.generated_result = None
@@ -236,12 +224,22 @@ elif input_method == "📷 その場で撮影":
         if st.button("❌ 閉じる"):
             st.session_state.show_camera = False
             st.rerun()
-        camera_file = st.camera_input("撮影", key=f"camera_{st.session_state.camera_key}")
+        
+        # ★★★ ここに親切な日本語ガイドを追加しました！ ★★★
+        st.info("""
+        ⚠️ **カメラの使い方のヒント**
+        1. **インカメラになる場合**: カメラ画面内の「Select Device」などをタップして切り替えてください。
+        2. **ボタンの意味**: 「Take Photo」＝ 撮影、「Clear Photo」＝ 撮り直し
+        """)
+        
+        camera_file = st.camera_input("📸 撮影（Take Photoを押してください）", key=f"camera_{st.session_state.camera_key}")
+        
         if camera_file:
-            if st.button("⬇️ 追加", type="primary"):
+            if st.button("⬇️ この写真を追加して次を撮る", type="primary"):
                 st.session_state.captured_images.append(camera_file)
                 st.session_state.camera_key += 1
                 st.rerun()
+    
     if st.session_state.captured_images:
         final_image_list.extend(st.session_state.captured_images)
         if st.button("🗑️ クリア"):
@@ -271,7 +269,7 @@ if st.button("🎙️ 作成開始", type="primary", use_container_width=True):
     if os.path.exists(output_dir): shutil.rmtree(output_dir)
     os.makedirs(output_dir)
 
-    with st.spinner('AIが解析中...'):
+    with st.spinner('解析中...'):
         try:
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel(target_model_name)
@@ -299,15 +297,14 @@ if st.button("🎙️ 作成開始", type="primary", use_container_width=True):
                 except exceptions.ResourceExhausted: time.sleep(5)
                 except: pass
 
-            if not resp: st.error("失敗"); st.stop()
-            
-            # JSON抽出
-            t = resp.text
-            s, e = t.find('['), t.rfind(']') + 1
-            if s == -1: st.error("AI解析エラー"); st.stop()
-            menu_data = json.loads(t[s:e])
+            if not resp: st.error("失敗しました"); st.stop()
 
-            # イントロ作成
+            text_resp = response.text
+            start = text_resp.find('[')
+            end = text_resp.rfind(']') + 1
+            if start == -1: st.error("解析エラー"); st.stop()
+            menu_data = json.loads(text_resp[start:end])
+
             intro_t = f"こんにちは、{store_name}です。"
             if menu_title: intro_t += f"ただいまより{menu_title}をご紹介します。"
             intro_t += "目次です。"
@@ -315,22 +312,15 @@ if st.button("🎙️ 作成開始", type="primary", use_container_width=True):
             intro_t += "それでは、ごゆっくりお聴きください。"
             menu_data.insert(0, {"title": "はじめに・目次", "text": intro_t})
 
-            # ★高速並列生成を実行★
             progress_bar = st.progress(0)
             st.info("音声を生成しています... (並列処理中)")
-            
-            generated_tracks = asyncio.run(
-                process_all_tracks_parallel(menu_data, output_dir, voice_code, rate_value, progress_bar)
-            )
+            generated_tracks = asyncio.run(process_all_tracks_parallel(menu_data, output_dir, voice_code, rate_value, progress_bar))
 
-            # HTML & ZIP作成
             html_str = create_standalone_html_player(store_name, generated_tracks)
-            
             d_str = datetime.now().strftime('%Y%m%d')
             s_name = sanitize_filename(store_name)
             zip_name = f"{s_name}_{d_str}.zip"
             zip_path = os.path.abspath(zip_name)
-            
             with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as z:
                 for root, dirs, files in os.walk(output_dir):
                     for file in files: z.write(os.path.join(root, file), file)
@@ -341,16 +331,14 @@ if st.button("🎙️ 作成開始", type="primary", use_container_width=True):
                 "tracks": generated_tracks
             }
             st.balloons()
-            
         except Exception as e: st.error(f"エラー: {e}")
 
-# Step 4: 結果表示
+# Step 4
 if st.session_state.generated_result:
     res = st.session_state.generated_result
     st.divider()
     st.subheader("▶️ プレビュー (その場で確認)")
     render_preview_player(res["tracks"])
-    
     st.divider()
     st.subheader("📥 保存")
     c_w, c_z = st.columns(2)
