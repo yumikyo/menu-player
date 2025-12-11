@@ -1,8 +1,127 @@
-# ==========================================
-# 修正版：ボタンクリック時の処理（リトライ機能付き）
-# ==========================================
-from google.api_core import exceptions # 追加のインポート
+import streamlit as st
+import os
+import sys
+import subprocess
+import asyncio
+import json
+import nest_asyncio
+import time
+import shutil
+import zipfile
+import re
+from datetime import datetime
+from gtts import gTTS
 
+# ==========================================
+# 1. 準備：ライブラリの強制ロード
+# ==========================================
+try:
+    import google.generativeai as genai
+    from google.api_core import exceptions
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "google-generativeai>=0.8.3"])
+    import google.generativeai as genai
+    from google.api_core import exceptions
+
+import edge_tts
+
+nest_asyncio.apply()
+st.set_page_config(page_title="Menu Player", layout="wide")
+
+# ==========================================
+# 2. サイドバー設定
+# ==========================================
+with st.sidebar:
+    st.header("🔧 設定")
+    
+    if "GEMINI_API_KEY" in st.secrets:
+        api_key = st.secrets["GEMINI_API_KEY"]
+        st.success("🔑 APIキー認証済み")
+    else:
+        api_key = st.text_input("Gemini APIキー", type="password")
+    
+    valid_models = []
+    target_model_name = None
+    
+    if api_key:
+        try:
+            genai.configure(api_key=api_key)
+            all_models = list(genai.list_models())
+            valid_models = [m.name for m in all_models if 'generateContent' in m.supported_generation_methods]
+        except:
+            pass
+    
+    if valid_models:
+        default_idx = next((i for i, n in enumerate(valid_models) if "flash" in n), 0)
+        target_model_name = st.selectbox("使用するAIモデル", valid_models, index=default_idx)
+    elif api_key:
+        st.error("有効なモデルが見つかりません")
+
+    st.divider()
+    
+    st.subheader("🗣️ 音声設定")
+    voice_options = {"女性（七海）": "ja-JP-NanamiNeural", "男性（慶太）": "ja-JP-KeitaNeural"}
+    selected_voice = st.selectbox("声の種類", list(voice_options.keys()))
+    voice_code = voice_options[selected_voice]
+    
+    speed_options = {
+        "標準 (±0%)": "+0%", 
+        "少し速く (1.2倍)": "+20%", 
+        "サクサク (1.4倍/推奨)": "+40%", 
+        "爆速 (2.0倍)": "+100%"
+    }
+    selected_speed_label = st.selectbox("読み上げ速度", list(speed_options.keys()), index=2)
+    rate_value = speed_options[selected_speed_label]
+
+# ==========================================
+# 3. メイン画面
+# ==========================================
+st.title("🎧 Menu Player")
+st.markdown("##### 視覚障害のある方のための「聴くメニュー」生成アプリ")
+
+# --- 店舗情報の入力フォーム ---
+col1, col2 = st.columns(2)
+with col1:
+    store_name = st.text_input("🏠 店舗名（必須）", placeholder="例：カフェタナカ")
+with col2:
+    menu_title = st.text_input("📖 今回のメニュー名（任意）", placeholder="例：冬のランチメニュー")
+
+uploaded_files = st.file_uploader(
+    "📸 メニューの写真を撮る / アップロード", 
+    type=['png', 'jpg', 'jpeg'], 
+    accept_multiple_files=True
+)
+
+if uploaded_files:
+    st.image(uploaded_files, width=150, caption=[f"{f.name}" for f in uploaded_files])
+
+# ==========================================
+# 4. 音声生成ロジック
+# ==========================================
+async def generate_audio_safe(text, filename, voice_code, rate_value):
+    # 3回リトライ
+    for attempt in range(3):
+        try:
+            comm = edge_tts.Communicate(text, voice_code, rate=rate_value)
+            await comm.save(filename)
+            if os.path.exists(filename) and os.path.getsize(filename) > 0:
+                return "EdgeTTS"
+        except Exception as e:
+            time.sleep(1)
+            
+    # 予備音声
+    try:
+        tts = gTTS(text=text, lang='ja')
+        tts.save(filename)
+        return "GoogleTTS"
+    except:
+        return "Error"
+
+# ファイル名に使えない文字を安全な文字に変換する関数
+def sanitize_filename(name):
+    return re.sub(r'[\\/*?:"<>|]', "", name).replace(" ", "_").replace("　", "_")
+
+# --- 生成ボタン処理（リトライ機能付き） ---
 if st.button("🎙️ 音声メニューを作成する"):
     if not api_key or not target_model_name:
         st.error("設定を確認してください（APIキーまたはモデル）")
@@ -39,7 +158,7 @@ if st.button("🎙️ 音声メニューを作成する"):
                 for f in uploaded_files:
                     content_parts.append({"mime_type": f.type, "data": f.getvalue()})
 
-                # --- 【ここを修正】粘り強くリトライする処理 ---
+                # --- 粘り強くリトライする処理 ---
                 response = None
                 retry_count = 0
                 max_retries = 3 # 最大3回までやり直す
