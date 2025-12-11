@@ -101,17 +101,16 @@ with tab1:
     
     st.markdown("### 2. その場で撮影（連続撮影可能）")
     
-    # カメラ入力（keyを変えることでリセットを実現）
+    # カメラ入力
     camera_file = st.camera_input("カメラを起動", key=f"camera_{st.session_state.camera_key}")
 
     if camera_file:
-        # 写真が撮られたら「追加ボタン」を表示
         if st.button("⬇️ この写真を追加して次を撮る", type="primary"):
             st.session_state.captured_images.append(camera_file)
-            st.session_state.camera_key += 1 # キーを変えてカメラをリセット
-            st.rerun() # 画面更新
+            st.session_state.camera_key += 1
+            st.rerun()
 
-    # --- 現在セットされている画像の確認エリア ---
+    # 画像の集約
     if uploaded_files:
         final_image_list.extend(uploaded_files)
     
@@ -124,18 +123,16 @@ with tab1:
             st.session_state.captured_images = []
             st.rerun()
 
-    # プレビュー表示
+    # プレビュー
     if final_image_list:
         st.success(f"現在 {len(final_image_list)} 枚の画像がセットされています")
-        # 横に並べて表示
         cols = st.columns(len(final_image_list))
         for idx, img in enumerate(final_image_list):
-            if idx < 5: # 画面幅的に5枚くらいまで表示
+            if idx < 5:
                 with cols[idx]:
                     st.image(img, caption=f"No.{idx+1}", use_container_width=True)
 
 with tab2:
-    # --- ここがエラーの原因だった箇所です（修正済み） ---
     st.info("お店のホームページや、食べログ等のメニューページのURLを入力してください。")
     target_url = st.text_input("URLを入力", placeholder="https://...")
 
@@ -185,7 +182,6 @@ if st.button("🎙️ 音声メニューを作成する"):
         st.warning("⚠️ 店舗名を入力してください（ファイル名に使用します）")
         st.stop()
 
-    # モード判定
     has_images = len(final_image_list) > 0
     has_url = bool(target_url)
 
@@ -193,7 +189,6 @@ if st.button("🎙️ 音声メニューを作成する"):
         st.warning("⚠️ 画像をアップロード/撮影するか、URLを入力してください")
         st.stop()
 
-    # フォルダのリセット
     output_dir = os.path.abspath("menu_audio_album")
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
@@ -236,7 +231,78 @@ if st.button("🎙️ 音声メニューを作成する"):
                     st.stop()
                 content_parts.append(base_prompt + f"\n\n以下はWebサイトから抽出したテキスト情報です。\n\n{web_text[:30000]}")
 
-            # AI生成実行（リトライ付き）
+            # AI生成実行（インデント修正済み）
             response = None
             retry_count = 0
             while retry_count < 3:
+                try:
+                    response = model.generate_content(content_parts)
+                    break
+                except exceptions.ResourceExhausted:
+                    st.warning(f"⚠️ 混雑中... ({retry_count+1}/3)")
+                    time.sleep(10)
+                    retry_count += 1
+                except Exception as e:
+                    raise e
+
+            if response is None:
+                st.error("❌ 混雑のため失敗しました。")
+                st.stop()
+
+            text_resp = response.text
+            start = text_resp.find('[')
+            end = text_resp.rfind(']') + 1
+            if start == -1 or end == 0:
+                 st.error("AIデータの解析に失敗しました。")
+                 st.stop()
+                 
+            menu_data = json.loads(text_resp[start:end])
+
+            # イントロダクション
+            intro_title = "はじめに・目次"
+            intro_text = f"こんにちは、{store_name}です。"
+            if menu_title:
+                intro_text += f"ただいまより、{menu_title}をご紹介します。"
+            intro_text += "今回の内容は以下の通りです。"
+            for i, track in enumerate(menu_data):
+                intro_text += f"トラック{i+2}は、{track['title']}。"
+            intro_text += "それでは、ごゆっくりお聴きください。"
+            menu_data.insert(0, {"title": intro_title, "text": intro_text})
+            
+            st.success(f"✅ 台本完成！ 全{len(menu_data)}トラック生成中...")
+            progress_bar = st.progress(0)
+            
+            # 音声合成
+            for i, track in enumerate(menu_data):
+                track_number = f"{i+1:02}"
+                safe_title = sanitize_filename(track['title'])
+                filename = f"{track_number}_{safe_title}.mp3"
+                save_path = os.path.join(output_dir, filename)
+                
+                st.write(f"🎵 Track {track_number}: {track['title']}")
+                method = asyncio.run(generate_audio_safe(track['text'], save_path, voice_code, rate_value))
+                
+                progress_bar.progress((i + 1) / len(menu_data))
+                time.sleep(0.5)
+
+            # ZIP化
+            date_str = datetime.now().strftime('%Y%m%d')
+            safe_store_name = sanitize_filename(store_name)
+            zip_filename = f"{safe_store_name}_{date_str}.zip"
+            
+            with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for root, dirs, files in os.walk(output_dir):
+                    for file in files:
+                        zipf.write(os.path.join(root, file), file)
+            
+            with open(zip_filename, "rb") as fp:
+                st.download_button(
+                    label=f"📥 {zip_filename} をダウンロード",
+                    data=fp,
+                    file_name=zip_filename,
+                    mime="application/zip"
+                )
+
+        except Exception as e:
+            st.error("エラーが発生しました")
+            st.write(f"詳細: {e}")
