@@ -2,16 +2,17 @@ import streamlit as st
 import os
 import sys
 import subprocess
+import time
 
 # ==========================================
-# 【最終奥義】強制アップデート処理
-# サーバーが古い道具を使わないように、ここで無理やり最新版を入れます
+# 強制アップデート（ゾンビ退治）
 # ==========================================
 try:
     import google.generativeai as genai
-    # バージョンが古い、または入っていない場合はインストール
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "google-generativeai>=0.8.3"])
-    import google.generativeai as genai
+    # バージョン確認。古ければ強制インストール
+    if genai.__version__ < "0.8.3":
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "google-generativeai>=0.8.3"])
+        import google.generativeai as genai
 except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "google-generativeai>=0.8.3"])
     import google.generativeai as genai
@@ -21,107 +22,108 @@ import asyncio
 import json
 import nest_asyncio
 
-# 非同期処理のパッチ
 nest_asyncio.apply()
-
-# ページ設定
 st.set_page_config(page_title="Menu Player", layout="wide")
 
-# タイトル
-st.title("🎧 Menu Player")
-st.markdown(f"""
-**視覚障害のある方のための「聴くメニュー」アプリ**
-AI Version: {genai.__version__} 
-""") 
-# ↑ここにバージョン番号が出るようにしました。 "0.8.3" 以上なら成功です！
-
-# サイドバー
+# ==========================================
+# サイドバー（設定）
+# ==========================================
 with st.sidebar:
-    st.header("設定")
-    api_key = st.text_input("Gemini APIキーを入力", type="password")
-    st.markdown("[APIキーの取得はこちら(無料)](https://aistudio.google.com/app/apikey)")
+    st.header("🔧 設定")
+    # ここに新しいキーを入れてもらいます
+    api_key = st.text_input("Gemini APIキー (AI Studioで取得)", type="password")
+    st.markdown("[👉 新しいキーの取得はこちら](https://aistudio.google.com/app/apikey)")
     
-    voice_options = {
-        "女性（七海）": "ja-JP-NanamiNeural",
-        "男性（慶太）": "ja-JP-KeitaNeural"
-    }
+    st.divider()
+    
+    # 【診断ツール】バージョン表示
+    st.caption(f"システム情報: Python {sys.version.split()[0]} / AI Lib {genai.__version__}")
+    
+    voice_options = {"女性（七海）": "ja-JP-NanamiNeural", "男性（慶太）": "ja-JP-KeitaNeural"}
     selected_voice = st.selectbox("音声の声", list(voice_options.keys()))
     voice_code = voice_options[selected_voice]
 
-# メイン処理
+# ==========================================
+# メイン画面
+# ==========================================
+st.title("🎧 Menu Player (診断モード付)")
+st.markdown("視覚障害のある方のための「聴くメニュー」アプリです。")
+
 uploaded_files = st.file_uploader(
-    "メニューの写真を撮影またはアップロード（複数選択可）", 
+    "メニュー画像をアップロード（複数OK）", 
     type=['png', 'jpg', 'jpeg'], 
     accept_multiple_files=True
 )
 
-if uploaded_files and api_key:
-    # 画像を表示
-    st.image(uploaded_files, caption=[f"{file.name}" for file in uploaded_files], width=200)
+if uploaded_files:
+    st.image(uploaded_files, width=150, caption=[f"{f.name}" for f in uploaded_files])
 
-    if st.button("🎙️ まとめて音声メニューを作成する"):
-        with st.spinner('AIが全ページを読んで、構成を考えています...'):
+# 実行ボタン
+if st.button("🎙️ 音声メニューを作成する"):
+    if not api_key:
+        st.warning("⚠️ 左側のサイドバーにAPIキーを入れてください")
+    else:
+        with st.spinner('AIに接続中...（APIキーと通信を確認しています）'):
             try:
-                # Geminiの設定
+                # 1. API設定
                 genai.configure(api_key=api_key)
-                model = genai.GenerativeModel('gemini-1.5-flash')
+                
+                # 2. 接続テスト（利用可能なモデル一覧を取得してみる）
+                # これができればAPIキーは正常です
+                try:
+                    models = list(genai.list_models())
+                    # モデル一覧にFlashがあるかチェック
+                    flash_exists = any('gemini-1.5-flash' in m.name for m in models)
+                    if not flash_exists:
+                        st.warning("⚠️ 注意: このAPIキーではGemini 1.5 Flashが見つかりません。別のモデルを試します。")
+                except Exception as e:
+                    st.error("🚫 APIキーのエラー: キーが無効か、アクセス権がありません。")
+                    st.error(f"詳細: {e}")
+                    st.stop() # 処理をここで止める
+
+                # 3. 本番処理
+                # モデル名を少し変更して通りやすくする
+                model = genai.GenerativeModel('gemini-1.5-flash-latest') 
                 
                 content_parts = []
                 prompt_text = """
-                あなたは視覚障害者のためにレストランのメニューを読み上げるプロのナレーターです。
-                提供された【複数のメニュー画像】をすべて解析し、お店全体のメニューとして統合して、以下のルールで「聴きやすい音声台本」を作成してください。
-
-                【ルール】
-                1. メニュー全体を論理的なカテゴリー（トラック）に整理してください。（例：ドリンク、前菜、メイン、デザートなど）
-                   ※ページごとではなく、内容でカテゴリー分けしてください。
-                2. トラック1は必ず「はじめに」として、店名の紹介やお店の雰囲気を伝えてください。
-                3. 価格は「円」まではっきり読み上げてください。
-                4. 画像が複数ある場合も、重複を避け、自然な流れで一つのコースのように案内してください。
-                
-                【出力フォーマット】
-                以下のJSON形式のみを出力してください。余計な解説やマークダウン記法(```json)は不要です。
-                [
-                    {"title": "トラック1：はじめに", "text": "読み上げ原稿..."},
-                    {"title": "トラック2：ドリンク", "text": "読み上げ原稿..."}
-                ]
+                あなたは視覚障害者のためのレストランメニュー読み上げのプロです。
+                提供された画像を解析し、以下のJSON形式のみを出力してください。
+                Markdown記法は使わないでください。
+                [{"title": "トラック1：店名・挨拶", "text": "..."}]
                 """
                 content_parts.append(prompt_text)
 
                 for file in uploaded_files:
-                    image_data = {
-                        "mime_type": file.type,
-                        "data": file.getvalue()
-                    }
+                    image_data = {"mime_type": file.type, "data": file.getvalue()}
                     content_parts.append(image_data)
 
+                # AI生成実行
                 response = model.generate_content(content_parts)
                 
-                text_response = response.text
-                start_index = text_response.find('[')
-                end_index = text_response.rfind(']') + 1
-                if start_index == -1:
-                     raise ValueError("AIがメニューをうまく読み取れませんでした。")
+                # JSON解析
+                text = response.text
+                start = text.find('[')
+                end = text.rfind(']') + 1
+                menu_data = json.loads(text[start:end])
                 
-                json_str = text_response[start_index:end_index]
-                menu_data = json.loads(json_str)
-                
-                st.success(f"✅ 作成完了！バージョン{genai.__version__}で動作中")
+                st.success(f"✅ 成功！ {len(menu_data)}個のトラックを作成しました。")
 
-                async def generate_audio_file(text, filename):
-                    communicate = edge_tts.Communicate(text, voice_code)
-                    await communicate.save(filename)
+                # 音声生成
+                async def gen_audio(t, f):
+                    comm = edge_tts.Communicate(t, voice_code)
+                    await comm.save(f)
 
                 for i, track in enumerate(menu_data):
                     st.subheader(f"🎵 {track['title']}")
                     st.write(track['text'])
-                    
-                    filename = f"track_{i+1}.mp3"
-                    asyncio.run(generate_audio_file(track['text'], filename))
-                    st.audio(filename, format='audio/mp3')
+                    fname = f"track_{i+1}.mp3"
+                    asyncio.run(gen_audio(track['text'], fname))
+                    st.audio(fname)
 
             except Exception as e:
-                st.error(f"エラーが発生しました: {e}")
-                st.info("APIキーが正しいか確認してください。")
-
-elif not api_key:
-    st.warning("左側のサイドバーにGemini APIキーを入力してください。")
+                st.error("❌ エラーが発生しました")
+                st.write("考えられる原因:")
+                st.write("1. APIキーが古い、または無効 (AI Studioで作り直してください)")
+                st.write("2. 画像が大きすぎる")
+                st.code(f"エラー詳細: {e}")
