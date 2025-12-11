@@ -71,7 +71,7 @@ async def process_all_tracks_fast(menu_data, output_dir, voice_code, rate_value,
     track_info_list = []
 
     for i, track in enumerate(menu_data):
-        # 【修正】日本語ファイル名はエラーの原因になるため、強制的に安全な英語名(track_01.mp3)にする
+        # 日本語ファイル名はエラーの原因になるため、強制的に安全な英語名(track_01.mp3)にする
         filename = f"track_{i+1:02}.mp3"
         save_path = os.path.join(output_dir, filename)
         
@@ -80,7 +80,13 @@ async def process_all_tracks_fast(menu_data, output_dir, voice_code, rate_value,
         if i > 0: speech_text = f"{i+1}、{track['title']}。\n{track['text']}"
         
         tasks.append(generate_single_track_fast(speech_text, save_path, voice_code, rate_value))
-        track_info_list.append({"title": track['title'], "path": save_path})
+        
+        # 本棚アプリのために、ここで英語ファイル名と日本語タイトルのペアを記録しておく
+        track_info_list.append({
+            "title": track['title'], 
+            "filename": filename,
+            "path": save_path
+        })
 
     total = len(tasks)
     completed = 0
@@ -210,9 +216,7 @@ if 'show_camera' not in st.session_state: st.session_state.show_camera = False
 st.markdown("### 1. お店情報の入力")
 c1, c2 = st.columns(2)
 with c1:
-    store_name = st.text_input("🏠 店舗名（表示用・日本語可）", placeholder="例：カフェタナカ")
-    # 【変更】ファイル名用のID入力欄を追加
-    store_id = st.text_input("📁 ファイル名用（英数字）", placeholder="例：cafe_tanaka")
+    store_name = st.text_input("🏠 店舗名（日本語でOK）", placeholder="例：カフェタナカ")
 with c2:
     menu_title = st.text_input("📖 今回のメニュー名", placeholder="例：ランチ")
 
@@ -261,4 +265,141 @@ elif input_method == "📷 その場で撮影":
         if st.button("🗑️ 全て削除"):
             st.session_state.captured_images = []
             st.rerun()
-        final_image_list.
+        final_image_list.extend(st.session_state.captured_images)
+
+elif input_method == "🌐 URL入力":
+    target_url = st.text_input("URL", placeholder="https://...")
+
+if input_method == "📂 アルバムから" and final_image_list:
+    st.markdown("###### ▼ 画像確認")
+    cols_per_row = 5
+    for i in range(0, len(final_image_list), cols_per_row):
+        cols = st.columns(cols_per_row)
+        batch = final_image_list[i:i+cols_per_row]
+        for j, img in enumerate(batch):
+            with cols[j]:
+                st.image(img, caption=f"No.{i+j+1}", use_container_width=True)
+st.markdown("---")
+
+# Step 3
+st.markdown("### 3. 音声メニューの作成")
+if st.button("🎙️ 作成開始", type="primary", use_container_width=True):
+    if not (api_key and target_model_name and store_name):
+        st.error("設定や店舗名を確認してください"); st.stop()
+    if not (final_image_list or target_url):
+        st.warning("画像かURLを入力してください"); st.stop()
+
+    output_dir = os.path.abspath("menu_audio_album")
+    if os.path.exists(output_dir): shutil.rmtree(output_dir)
+    os.makedirs(output_dir)
+
+    with st.spinner('解析中...'):
+        try:
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel(target_model_name)
+            parts = []
+            
+            prompt = """
+            あなたは視覚障害者のためのメニュー読み上げデータ作成のプロです。
+            メニューの内容を解析し、聞きやすいように【5つ〜8つ程度の大きなカテゴリー】に分類してまとめてください。
+            
+            重要ルール:
+            1. メニュー項目1つごとに1つのカテゴリーを作らないこと。
+            2. 「前菜・サラダ」「メイン料理」「ご飯・麺」「ドリンク」「デザート」のようにグループ化する。
+            3. カテゴリー内のメニューは、挨拶などを抜きにして商品名と価格をテンポよく読み上げる文章にする。
+
+            出力フォーマット（JSONのみ）:
+            [
+              {"title": "カテゴリー名（例：前菜・サラダ）", "text": "読み上げ文（例：まずは前菜です。シーザーサラダ800円。ポテトサラダ500円。）"},
+              {"title": "カテゴリー名（例：メイン料理）", "text": "読み上げ文（例：続いてメインです。ハンバーグ定食1200円。ステーキ1500円。）"}
+            ]
+            """
+            
+            if final_image_list:
+                parts.append(prompt)
+                for f in final_image_list:
+                    f.seek(0)
+                    parts.append({"mime_type": f.type if hasattr(f, 'type') else 'image/jpeg', "data": f.getvalue()})
+            elif target_url:
+                web_text = fetch_text_from_url(target_url)
+                if not web_text: st.error("URLエラー"); st.stop()
+                parts.append(prompt + f"\n\n{web_text[:30000]}")
+
+            resp = None
+            for _ in range(3):
+                try: resp = model.generate_content(parts); break
+                except exceptions.ResourceExhausted: time.sleep(5)
+                except: pass
+
+            if not resp: st.error("失敗しました"); st.stop()
+
+            text_resp = resp.text
+            
+            start = text_resp.find('[')
+            end = text_resp.rfind(']') + 1
+            if start == -1: st.error("解析エラー"); st.stop()
+            menu_data = json.loads(text_resp[start:end])
+
+            intro_t = f"こんにちは、{store_name}です。"
+            if menu_title: intro_t += f"ただいまより{menu_title}をご紹介します。"
+            intro_t += "目次です。"
+            for i, tr in enumerate(menu_data): intro_t += f"{i+2}、{tr['title']}。"
+            intro_t += "それでは、ごゆっくりお聴きください。"
+            menu_data.insert(0, {"title": "はじめに・目次", "text": intro_t})
+
+            progress_bar = st.progress(0)
+            st.info("音声を生成しています... (並列処理中)")
+            generated_tracks = asyncio.run(process_all_tracks_fast(menu_data, output_dir, voice_code, rate_value, progress_bar))
+
+            html_str = create_standalone_html_player(store_name, generated_tracks)
+            
+            # プレイリストJSON保存
+            playlist_data_for_app = []
+            for tr in generated_tracks:
+                playlist_data_for_app.append({"title": tr['title'], "filename": os.path.basename(tr['path'])})
+            
+            with open(os.path.join(output_dir, "playlist.json"), "w", encoding='utf-8') as f:
+                json.dump(playlist_data_for_app, f, ensure_ascii=False, indent=2)
+
+            # ZIP化
+            d_str = datetime.now().strftime('%Y%m%d_%H%M%S')
+            zip_name = f"menu_{d_str}.zip"
+            zip_path = os.path.abspath(zip_name)
+            
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as z:
+                for root, dirs, files in os.walk(output_dir):
+                    for file in files: z.write(os.path.join(root, file), file)
+
+            with open(zip_path, "rb") as f:
+                zip_data = f.read()
+
+            st.session_state.generated_result = {
+                "zip_data": zip_data,
+                "zip_name": zip_name,
+                "html_content": html_str, 
+                "html_name": f"player_{d_str}.html",
+                "tracks": generated_tracks
+            }
+            st.balloons()
+        except Exception as e: st.error(f"エラー: {e}")
+
+# Step 4
+if st.session_state.generated_result:
+    res = st.session_state.generated_result
+    st.divider()
+    st.subheader("▶️ プレビュー (その場で確認)")
+    render_preview_player(res["tracks"])
+    st.divider()
+    st.subheader("📥 保存・共有")
+    
+    st.info("""
+    **📱 LINEなどで送る方法**
+    1. 下の **「🌐 Webプレイヤー」** ボタンでHTMLを保存し、スマホに送る。
+    2. もしくは **「📦 ZIPファイル」** を保存して、My Menu Book アプリに登録する。
+    """)
+    
+    c_w, c_z = st.columns(2)
+    with c_w:
+        st.download_button(f"🌐 Webプレイヤー ({res['html_name']})", res['html_content'], res['html_name'], "text/html", type="primary")
+    with c_z:
+        st.download_button(f"📦 ZIPファイル ({res['zip_name']})", data=res["zip_data"], file_name=res['zip_name'], mime="application/zip")
