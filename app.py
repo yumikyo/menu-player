@@ -27,11 +27,9 @@ st.set_page_config(page_title="Menu Player Generator", layout="wide")
 # 1. 関数定義群
 # ==========================================
 
-# ファイル名に使えない文字を削除
 def sanitize_filename(name):
     return re.sub(r'[\\/*?:"<>|]', "", name).replace(" ", "_").replace("　", "_")
 
-# URLからテキスト抽出
 def fetch_text_from_url(url):
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
@@ -44,7 +42,6 @@ def fetch_text_from_url(url):
         return "\n".join(lines)
     except: return None
 
-# 音声生成（単体）
 async def generate_single_track(text, filename, voice_code, rate_value):
     for attempt in range(3):
         try:
@@ -63,7 +60,6 @@ async def generate_single_track(text, filename, voice_code, rate_value):
     except:
         return False
 
-# 一括生成マネージャー
 async def process_all_tracks_parallel(menu_data, output_dir, voice_code, rate_value, progress_bar):
     tasks = []
     track_info_list = []
@@ -88,7 +84,6 @@ async def process_all_tracks_parallel(menu_data, output_dir, voice_code, rate_va
     
     return track_info_list
 
-# HTMLプレイヤー作成
 def create_standalone_html_player(store_name, menu_data):
     playlist_js = []
     for track in menu_data:
@@ -124,7 +119,6 @@ au.onended=function(){{if(idx<pl.length-1)next();else pb.innerText="▶";}};
 function ren(){{const d=document.getElementById('ls');d.innerHTML="";pl.forEach((t,i)=>{{const m=document.createElement('div');m.className="itm "+(i===idx?"active":"");m.innerText=(i+1)+". "+t.title;m.onclick=()=>{{ld(i);au.play();pb.innerText="⏸";}};d.appendChild(m);}});}}
 init();</script></body></html>"""
 
-# プレビュープレイヤー表示関数
 def render_preview_player(tracks):
     playlist_data = []
     for track in tracks:
@@ -221,35 +215,53 @@ elif input_method == "📷 その場で撮影":
             st.session_state.show_camera = True
             st.rerun()
     else:
-        if st.button("❌ 閉じる"):
-            st.session_state.show_camera = False
-            st.rerun()
+        # ガイドメッセージ
+        st.info("⚠️ インカメラになる場合は、カメラ画面内の切替ボタンを押してください")
         
-        # ★★★ ここに親切な日本語ガイドを追加しました！ ★★★
-        st.info("""
-        ⚠️ **カメラの使い方のヒント**
-        1. **インカメラになる場合**: カメラ画面内の「Select Device」などをタップして切り替えてください。
-        2. **ボタンの意味**: 「Take Photo」＝ 撮影、「Clear Photo」＝ 撮り直し
-        """)
-        
+        # カメラ入力
         camera_file = st.camera_input("📸 撮影（Take Photoを押してください）", key=f"camera_{st.session_state.camera_key}")
         
+        # 撮影後のボタン群（追加と閉じるを縦に並べる）
         if camera_file:
             if st.button("⬇️ この写真を追加して次を撮る", type="primary"):
                 st.session_state.captured_images.append(camera_file)
                 st.session_state.camera_key += 1
                 st.rerun()
-    
+                
+        st.markdown("---")
+        # 閉じるボタンを下にも配置
+        if st.button("❌ カメラを閉じる"):
+            st.session_state.show_camera = False
+            st.rerun()
+
+    # ★ここが新機能：個別削除（とりなおし）★
     if st.session_state.captured_images:
-        final_image_list.extend(st.session_state.captured_images)
-        if st.button("🗑️ クリア"):
+        st.markdown("#### 📸 撮影された写真リスト")
+        
+        # enumerateをリストコピーで行い、削除時のズレを防ぐ
+        for i, img in enumerate(st.session_state.captured_images):
+            c_img, c_del = st.columns([1, 2])
+            with c_img:
+                st.image(img, width=100)
+            with c_del:
+                st.write(f"No.{i+1}")
+                # 個別削除ボタン
+                if st.button(f"🗑️ No.{i+1} を削除（とりなおす）", key=f"del_{i}"):
+                    del st.session_state.captured_images[i]
+                    st.rerun()
+        
+        st.divider()
+        if st.button("🗑️ 全て削除して最初から"):
             st.session_state.captured_images = []
             st.rerun()
+            
+        final_image_list.extend(st.session_state.captured_images)
 
 elif input_method == "🌐 URL入力":
     target_url = st.text_input("URL", placeholder="https://...")
 
-if final_image_list:
+# 画像確認（アルバムからの場合のみここで表示。カメラは上で表示済み）
+if input_method == "📂 アルバムから" and final_image_list:
     st.markdown("###### ▼ 画像確認")
     cols = st.columns(len(final_image_list))
     for idx, img in enumerate(final_image_list):
