@@ -84,14 +84,17 @@ if 'captured_images' not in st.session_state:
     st.session_state.captured_images = []
 if 'camera_key' not in st.session_state:
     st.session_state.camera_key = 0
+# 生成結果を保存する変数
+if 'generated_result' not in st.session_state:
+    st.session_state.generated_result = None
 
 # --- 入力モードの切り替えタブ ---
-tab1, tab2 = st.tabs(["📸 画像・カメラ", "🌐 Webリンク"])
+tab_in1, tab_in2 = st.tabs(["📸 画像・カメラ", "🌐 Webリンク"])
 
 final_image_list = []
 target_url = None
 
-with tab1:
+with tab_in1:
     st.markdown("### 1. アルバムから選択")
     uploaded_files = st.file_uploader(
         "スマホ内の写真を選択", 
@@ -100,8 +103,6 @@ with tab1:
     )
     
     st.markdown("### 2. その場で撮影（連続撮影可能）")
-    
-    # カメラ入力
     camera_file = st.camera_input("カメラを起動", key=f"camera_{st.session_state.camera_key}")
 
     if camera_file:
@@ -110,20 +111,16 @@ with tab1:
             st.session_state.camera_key += 1
             st.rerun()
 
-    # 画像の集約
     if uploaded_files:
         final_image_list.extend(uploaded_files)
-    
     if st.session_state.captured_images:
         final_image_list.extend(st.session_state.captured_images)
     
-    # リセットボタン
     if st.session_state.captured_images:
         if st.button("🗑️ 撮影した写真を全てクリア"):
             st.session_state.captured_images = []
             st.rerun()
 
-    # プレビュー
     if final_image_list:
         st.success(f"現在 {len(final_image_list)} 枚の画像がセットされています")
         cols = st.columns(len(final_image_list))
@@ -132,7 +129,7 @@ with tab1:
                 with cols[idx]:
                     st.image(img, caption=f"No.{idx+1}", use_container_width=True)
 
-with tab2:
+with tab_in2:
     st.info("お店のホームページや、食べログ等のメニューページのURLを入力してください。")
     target_url = st.text_input("URLを入力", placeholder="https://...")
 
@@ -177,16 +174,15 @@ if st.button("🎙️ 音声メニューを作成する"):
     if not api_key or not target_model_name:
         st.error("設定を確認してください（APIキーまたはモデル）")
         st.stop()
-    
     if not store_name:
-        st.warning("⚠️ 店舗名を入力してください（ファイル名に使用します）")
+        st.warning("⚠️ 店舗名を入力してください")
         st.stop()
 
     has_images = len(final_image_list) > 0
     has_url = bool(target_url)
 
     if not has_images and not has_url:
-        st.warning("⚠️ 画像をアップロード/撮影するか、URLを入力してください")
+        st.warning("⚠️ 画像かURLを入力してください")
         st.stop()
 
     output_dir = os.path.abspath("menu_audio_album")
@@ -198,18 +194,17 @@ if st.button("🎙️ 音声メニューを作成する"):
         try:
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel(target_model_name)
-            
             content_parts = []
             
             base_prompt = """
             あなたは視覚障害者のためのレストランメニュー読み上げのプロです。
             提供された情報を解析し、以下のJSON形式のみを出力してください。
-            Markdown記法（```jsonなど）は不要です。生データのみ返してください。
+            Markdown記法は不要です。
             
             ルール:
             1. 価格は「円」まで読み上げる形式にする。
             2. カテゴリーごとにトラックを分ける。
-            3. URLからの情報の場合、メニューと関係ないナビゲーション文字などは無視する。
+            3. URLからの情報の場合、ナビゲーション文字などは無視する。
             
             出力例:
             [
@@ -223,15 +218,14 @@ if st.button("🎙️ 音声メニューを作成する"):
                 for f in final_image_list:
                     f.seek(0)
                     content_parts.append({"mime_type": f.type if hasattr(f, 'type') else 'image/jpeg', "data": f.getvalue()})
-            
             elif has_url:
                 web_text = fetch_text_from_url(target_url)
                 if not web_text:
-                    st.error("URLから情報を読み取れませんでした。")
+                    st.error("URL読み取り失敗")
                     st.stop()
-                content_parts.append(base_prompt + f"\n\n以下はWebサイトから抽出したテキスト情報です。\n\n{web_text[:30000]}")
+                content_parts.append(base_prompt + f"\n\nURLからのテキスト:\n\n{web_text[:30000]}")
 
-            # AI生成実行（インデント修正済み）
+            # AI生成
             response = None
             retry_count = 0
             while retry_count < 3:
@@ -246,7 +240,7 @@ if st.button("🎙️ 音声メニューを作成する"):
                     raise e
 
             if response is None:
-                st.error("❌ 混雑のため失敗しました。")
+                st.error("❌ 失敗しました。")
                 st.stop()
 
             text_resp = response.text
@@ -258,7 +252,7 @@ if st.button("🎙️ 音声メニューを作成する"):
                  
             menu_data = json.loads(text_resp[start:end])
 
-            # イントロダクション
+            # イントロ追加
             intro_title = "はじめに・目次"
             intro_text = f"こんにちは、{store_name}です。"
             if menu_title:
@@ -269,40 +263,85 @@ if st.button("🎙️ 音声メニューを作成する"):
             intro_text += "それでは、ごゆっくりお聴きください。"
             menu_data.insert(0, {"title": intro_title, "text": intro_text})
             
-            st.success(f"✅ 台本完成！ 全{len(menu_data)}トラック生成中...")
+            st.success(f"✅ 台本完成！ 音声ファイルを生成します...")
             progress_bar = st.progress(0)
             
-            # 音声合成
+            # 生成ループ（保存のみ）
+            generated_tracks = []
+            
             for i, track in enumerate(menu_data):
                 track_number = f"{i+1:02}"
                 safe_title = sanitize_filename(track['title'])
                 filename = f"{track_number}_{safe_title}.mp3"
                 save_path = os.path.join(output_dir, filename)
                 
-                st.write(f"🎵 Track {track_number}: {track['title']}")
-                method = asyncio.run(generate_audio_safe(track['text'], save_path, voice_code, rate_value))
+                # 音声生成
+                asyncio.run(generate_audio_safe(track['text'], save_path, voice_code, rate_value))
+                
+                # 結果リストに追加
+                generated_tracks.append({
+                    "title": track['title'],
+                    "path": save_path
+                })
                 
                 progress_bar.progress((i + 1) / len(menu_data))
-                time.sleep(0.5)
 
             # ZIP化
             date_str = datetime.now().strftime('%Y%m%d')
             safe_store_name = sanitize_filename(store_name)
             zip_filename = f"{safe_store_name}_{date_str}.zip"
+            zip_path = os.path.abspath(zip_filename)
             
-            with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
                 for root, dirs, files in os.walk(output_dir):
                     for file in files:
                         zipf.write(os.path.join(root, file), file)
+
+            # --- 結果をセッションステートに保存 ---
+            st.session_state.generated_result = {
+                "zip_path": zip_path,
+                "zip_name": zip_filename,
+                "tracks": generated_tracks
+            }
             
-            with open(zip_filename, "rb") as fp:
-                st.download_button(
-                    label=f"📥 {zip_filename} をダウンロード",
-                    data=fp,
-                    file_name=zip_filename,
-                    mime="application/zip"
-                )
+            st.balloons() # 完成祝いのエフェクト
 
         except Exception as e:
             st.error("エラーが発生しました")
             st.write(f"詳細: {e}")
+
+# ==========================================
+# 4. 生成完了後のアクション選択画面
+# ==========================================
+if st.session_state.generated_result:
+    result = st.session_state.generated_result
+    
+    st.divider()
+    st.markdown("## 🎉 生成完了！")
+    st.info("以下から操作を選んでください。")
+
+    # タブで選択肢を表示
+    tab_dl, tab_play = st.tabs(["📥 ダウンロード", "▶️ 今すぐ再生する"])
+    
+    with tab_dl:
+        st.subheader("ZIPファイルで保存")
+        st.write("PCや他の端末で使いたい場合はこちら。")
+        with open(result["zip_path"], "rb") as fp:
+            st.download_button(
+                label=f"📦 {result['zip_name']} をダウンロード",
+                data=fp,
+                file_name=result["zip_name"],
+                mime="application/zip",
+                type="primary"
+            )
+
+    with tab_play:
+        st.subheader("Webプレイヤーで確認")
+        st.write("ダウンロードせずに、この場で内容をチェックできます。")
+        
+        for track in result["tracks"]:
+            st.markdown(f"**{os.path.basename(track['path'])}**") # ファイル名表示
+            if os.path.exists(track['path']):
+                st.audio(track['path'])
+            else:
+                st.error("ファイルが見つかりません")
