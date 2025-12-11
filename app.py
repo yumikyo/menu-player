@@ -168,19 +168,6 @@ def render_preview_player(tracks):
     html_code = html_template.replace("__PLAYLIST__", playlist_json)
     components.html(html_code, height=400)
 
-# シェアボタン関数
-def render_share_button(html_content, file_name):
-    b64_html = base64.b64encode(html_content.encode('utf-8')).decode('utf-8')
-    html_template = """
-    <!DOCTYPE html><html><head><style>
-    .share-btn {width:100%;padding:15px;background-color:#28a745;color:white;font-size:16px;font-weight:bold;border:none;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;}
-    </style></head><body>
-    <button class="share-btn" onclick="shareFile()">📤 プレイヤーをLINEなどで送る (共有)</button>
-    <script>async function shareFile(){const b64="__B64__";const fileName="__FILENAME__";try{const byteCharacters=atob(b64);const byteNumbers=new Array(byteCharacters.length);for(let i=0;i<byteCharacters.length;i++){byteNumbers[i]=byteCharacters.charCodeAt(i);}const byteArray=new Uint8Array(byteNumbers);const blob=new Blob([byteArray],{type:"text/html"});const file=new File([blob],fileName,{type:"text/html"});if(navigator.share){await navigator.share({files:[file],title:'音声メニュー',text:'お店の音声メニューを送ります。'});}else{alert("ブラウザが対応していません。下のダウンロードボタンを使ってください。");}}catch(e){alert("共有失敗: "+e);}}</script></body></html>"""
-    
-    share_code = html_template.replace("__B64__", b64_html).replace("__FILENAME__", file_name)
-    components.html(share_code, height=60)
-
 # ==========================================
 # 2. UI設定
 # ==========================================
@@ -369,12 +356,11 @@ if st.button("🎙️ 作成開始", type="primary", use_container_width=True):
                 for root, dirs, files in os.walk(output_dir):
                     for file in files: z.write(os.path.join(root, file), file)
 
-            # 【修正点】ZIPファイルをメモリに読み込んでから保存する
             with open(zip_path, "rb") as f:
                 zip_data = f.read()
 
             st.session_state.generated_result = {
-                "zip_data": zip_data, # 実データを保存
+                "zip_data": zip_data,
                 "zip_name": zip_name,
                 "html_content": html_str, 
                 "html_name": f"{s_name}_player.html",
@@ -390,16 +376,20 @@ if st.session_state.generated_result:
     st.subheader("▶️ プレビュー (その場で確認)")
     render_preview_player(res["tracks"])
     st.divider()
-    st.subheader("📥 共有・保存")
+    st.subheader("📥 保存・LINEで送る方法")
     
-    st.markdown("**📱 1. プレイヤーを直接送る (LINEなど)**")
-    render_share_button(res['html_content'], res['html_name'])
+    # 共有ボタンを削除し、確実なダウンロードを推奨するUIに変更
+    st.info("""
+    **📱 LINEで送る方法（重要）**
+    LINEのセキュリティ制限により、ここから直接送ることはできません。以下の手順で行ってください。
     
-    st.write("")
-    st.markdown("**📥 2. ファイルとして保存**")
+    1. 下の **「🌐 Webプレイヤーをダウンロード」** ボタンを押して、スマホに保存する。
+    2. スマホの「ファイル」アプリ（iPhoneなら"ファイル"、Androidなら"Files"）を開く。
+    3. ダウンロードしたファイルを長押しして「共有」を選び、LINEを選択する。
+    """)
+    
     c_w, c_z = st.columns(2)
     with c_w:
-        st.download_button(f"🌐 Webプレイヤー ({res['html_name']})", res['html_content'], res['html_name'], "text/html")
+        st.download_button(f"🌐 Webプレイヤー ({res['html_name']})", res['html_content'], res['html_name'], "text/html", type="primary")
     with c_z:
-        # 【修正点】ファイルパスではなく、メモリ上のデータ(zip_data)を渡す
         st.download_button(f"📦 ZIPファイル ({res['zip_name']})", data=res["zip_data"], file_name=res['zip_name'], mime="application/zip")
