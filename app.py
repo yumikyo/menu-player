@@ -224,7 +224,7 @@ init();
     final_html = final_html.replace("__MAP_BUTTON__", map_button_html)
     return final_html
 
-# プレビュー用プレイヤー（デザイン更新版）
+# プレビュー用プレイヤー
 def render_preview_player(tracks):
     playlist_data = []
     for track in tracks:
@@ -358,9 +358,9 @@ elif input_method == "📷 その場で撮影":
         target_idx = st.session_state.retake_index
         st.warning(f"No.{target_idx + 1} の画像を再撮影中...")
         
-        # 再撮影用のカメラキー（キャッシュ対策）
+        # 再撮影用のカメラキー
         retake_camera_key = f"retake_camera_{target_idx}_{st.session_state.camera_key}"
-        camera_file = st.camera_input("撮影 (取り直し)", key=retake_camera_key)
+        camera_file = st.camera_input("写真を撮影する (取り直し)", key=retake_camera_key)
 
         c1, c2 = st.columns(2)
         with c1:
@@ -384,8 +384,8 @@ elif input_method == "📷 その場で撮影":
             st.rerun()
             
     else:
-        # カメラ起動中
-        camera_file = st.camera_input("撮影", key=f"camera_{st.session_state.camera_key}")
+        # カメラ起動中（ラベルを「写真を撮影する」に変更）
+        camera_file = st.camera_input("写真を撮影する", key=f"camera_{st.session_state.camera_key}")
         
         if camera_file:
             # 写真が撮られた状態：2つの選択肢を表示
@@ -417,7 +417,7 @@ elif input_method == "📷 その場で撮影":
 elif input_method == "🌐 URL入力":
     target_url = st.text_input("URL", placeholder="https://...")
 
-# プレビュー表示
+# プレビュー表示（撮影済み画像の確認と削除・再撮影）
 if final_image_list and st.session_state.retake_index is None:
     st.markdown("###### ▼ 画像確認")
     cols_per_row = 3
@@ -428,11 +428,24 @@ if final_image_list and st.session_state.retake_index is None:
             global_idx = i + j
             with cols[j]:
                 st.image(img, caption=f"No.{global_idx+1}", use_container_width=True)
+                
+                # 「その場で撮影」の場合、削除と再撮影ボタンを表示
                 if input_method == "📷 その場で撮影" and img in st.session_state.captured_images:
-                    if st.button("🔄 取り直す", key=f"btn_retake_{global_idx}"):
-                        st.session_state.retake_index = global_idx
-                        st.session_state.show_camera = True
-                        st.rerun()
+                    c_retake, c_delete = st.columns(2)
+                    with c_retake:
+                        if st.button("🔄 取り直す", key=f"btn_retake_{global_idx}", use_container_width=True):
+                            st.session_state.retake_index = global_idx
+                            st.session_state.show_camera = True
+                            st.rerun()
+                    with c_delete:
+                        # 削除ボタン
+                        if st.button("🗑️ 削除", key=f"btn_delete_{global_idx}", use_container_width=True):
+                            # リストから削除
+                            st.session_state.captured_images.pop(global_idx)
+                            # インデックスずれを防ぐためリセット
+                            st.session_state.retake_index = None
+                            st.session_state.show_camera = False
+                            st.rerun()
 
 st.markdown("---")
 
@@ -497,9 +510,12 @@ if st.button("🎙️ 作成開始", type="primary", use_container_width=True, d
 
             intro_t = f"こんにちは、{store_name}です。"
             if menu_title: intro_t += f"ただいまより{menu_title}をご紹介します。"
-            intro_t += "このプレイヤーは、スクリーンリーダーでの操作に対応しています。まずは目次です。"
+            intro_t += "このプレイヤーは、スクリーンリーダーでの操作に対応しています。"
+            # カテゴリー数を伝える
+            intro_t += f"このメニューは、全部で{len(menu_data)}つのカテゴリーに分かれています。まずは目次です。"
             for i, tr in enumerate(menu_data): intro_t += f"{i+2}、{tr['title']}。"
-            intro_t += "それでは、ごゆっくりお聴きください。"
+            # 修正箇所
+            intro_t += "それではどうぞ。"
             menu_data.insert(0, {"title": "はじめに・目次", "text": intro_t})
 
             progress_bar = st.progress(0)
