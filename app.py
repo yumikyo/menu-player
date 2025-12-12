@@ -371,7 +371,7 @@ with st.sidebar:
 st.title("🎧 Menu Player Generator")
 st.caption("視覚障がいのある方のための、アクセシビリティに配慮した音声メニューを作成します。")
 
-# 再撮影する画像のインデックスを保持するstate
+# ステートの初期化
 if 'retake_index' not in st.session_state: st.session_state.retake_index = None
 if 'captured_images' not in st.session_state: st.session_state.captured_images = []
 if 'camera_key' not in st.session_state: st.session_state.camera_key = 0
@@ -401,6 +401,7 @@ if input_method == "📂 アルバムから":
     if uploaded_files: final_image_list.extend(uploaded_files)
 
 elif input_method == "📷 その場で撮影":
+    # 再撮影モードの処理
     if st.session_state.retake_index is not None:
         target_idx = st.session_state.retake_index
         st.warning(f"No.{target_idx + 1} の画像を再撮影中...")
@@ -413,7 +414,6 @@ elif input_method == "📷 その場で撮影":
                 st.session_state.captured_images[target_idx] = camera_file
                 st.session_state.retake_index = None
                 st.session_state.show_camera = False 
-                st.session_state.camera_key += 1
                 st.rerun()
         with c2:
             if st.button("❌ キャンセル", key="retake_cancel", use_container_width=True):
@@ -421,185 +421,28 @@ elif input_method == "📷 その場で撮影":
                 st.session_state.show_camera = False
                 st.rerun()
 
+    # 通常撮影モード
     elif not st.session_state.show_camera:
         if st.button("📷 カメラ起動", type="primary"):
             st.session_state.show_camera = True
             st.rerun()
     else:
-        camera_file = st.camera_input("写真を撮影する", key=f"camera_{st.session_state.camera_key}")
-        if camera_file:
+        # ★ここが重要：keyを固定文字列にします
+        camera_file = st.camera_input("写真を撮影する", key="menu_camera_fixed")
+        
+        # 直前の画像と同じデータなら重複追加を防ぐ
+        is_new_photo = True
+        if camera_file is not None and st.session_state.captured_images:
+            last_img = st.session_state.captured_images[-1]
+            if camera_file.getvalue() == last_img.getvalue():
+                is_new_photo = False
+
+        if camera_file is not None:
             c_btn1, c_btn2 = st.columns(2, gap="large")
             with c_btn1:
+                # 追加ボタン
                 if st.button("⬇️ 追加して次を撮る", type="primary", use_container_width=True):
-                    st.session_state.captured_images.append(camera_file)
-                    st.session_state.camera_key += 1
-                    st.rerun()
-            with c_btn2:
-                if st.button("✅ 追加して終了", type="primary", use_container_width=True):
-                    st.session_state.captured_images.append(camera_file)
-                    st.session_state.show_camera = False
-                    st.session_state.camera_key += 1
-                    st.rerun()
-        else:
-            if st.button("❌ 撮影を中止", use_container_width=True):
-                st.session_state.show_camera = False
-                st.rerun()
-            
-    if st.session_state.captured_images:
-        if st.session_state.retake_index is None and st.session_state.show_camera is False:
-             if st.button("🗑️ 全て削除"):
-                st.session_state.captured_images = []
-                st.rerun()
-        final_image_list.extend(st.session_state.captured_images)
-
-elif input_method == "🌐 URL入力":
-    target_url = st.text_input("URL", placeholder="https://...")
-
-if final_image_list and st.session_state.retake_index is None:
-    st.markdown("###### ▼ 画像確認")
-    cols_per_row = 3
-    for i in range(0, len(final_image_list), cols_per_row):
-        cols = st.columns(cols_per_row, gap="medium")
-        batch = final_image_list[i:i+cols_per_row]
-        for j, img in enumerate(batch):
-            global_idx = i + j
-            with cols[j]:
-                st.image(img, caption=f"No.{global_idx+1}", use_container_width=True)
-                if input_method == "📷 その場で撮影" and img in st.session_state.captured_images:
-                    c_retake, c_delete = st.columns(2, gap="small")
-                    with c_retake:
-                        if st.button("🔄 撮り直す", key=f"btn_retake_{global_idx}", use_container_width=True):
-                            st.session_state.retake_index = global_idx
-                            st.session_state.show_camera = True
-                            st.rerun()
-                    with c_delete:
-                        if st.button("🗑️ 削除", key=f"btn_delete_{global_idx}", use_container_width=True):
-                            st.session_state.captured_images.pop(global_idx)
-                            st.session_state.retake_index = None
-                            st.session_state.show_camera = False
-                            st.rerun()
-
-st.markdown("---")
-
-st.markdown("### 3. 音声メニューの作成")
-disable_create = st.session_state.retake_index is not None
-if st.button("🎙️ 作成開始", type="primary", use_container_width=True, disabled=disable_create):
-    if not (api_key and target_model_name and store_name):
-        st.error("設定や店舗名を確認してください"); st.stop()
-    if not (final_image_list or target_url):
-        st.warning("画像かURLを入力してください"); st.stop()
-
-    output_dir = os.path.abspath("menu_audio_album")
-    if os.path.exists(output_dir): shutil.rmtree(output_dir)
-    os.makedirs(output_dir)
-
-    with st.spinner('解析中...'):
-        try:
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(target_model_name)
-            parts = []
-            
-            # 辞書データの取得とJSON文字列化
-            user_dict_str = json.dumps(user_dict, ensure_ascii=False)
-            
-            prompt = f"""
-            あなたは視覚障害者のためのメニュー読み上げデータ作成のプロです。
-            メニューの内容を解析し、聞きやすいように【5つ〜8つ程度の大きなカテゴリー】に分類してまとめてください。
-            
-            重要ルール:
-            1. メニュー項目1つごとに1つのカテゴリーを作らないこと。
-            2. 「前菜・サラダ」「メイン料理」「ご飯・麺」「ドリンク」「デザート」のようにグループ化する。
-            3. カテゴリー内のメニューは、挨拶などを抜きにして商品名と価格をテンポよく読み上げる文章にする。
-            4. 価格の数字には必ず「円」をつけて読み上げる（例：1000 -> 1000円）。
-            5. アレルギー、辛さ、量などの重要な注意書きは、省略せず商品名の後に補足して読み上げる。
-            
-            ★重要：以下の固有名詞・読み方辞書を必ず守ってください。
-            {user_dict_str}
-
-            出力フォーマット（JSONのみ）:
-            [
-              {{"title": "カテゴリー名（例：前菜・サラダ）", "text": "読み上げ文（例：まずは前菜です。シーザーサラダ800円。ポテトサラダ500円。なお、ドレッシングは別添え可能です。）"}},
-              {{"title": "カテゴリー名（例：メイン料理）", "text": "読み上げ文（例：続いてメインです。ハンバーグ定食1200円。ステーキ1500円。ご飯の大盛りは無料です。）"}}
-            ]
-            """
-            
-            if final_image_list:
-                parts.append(prompt)
-                for f in final_image_list:
-                    f.seek(0)
-                    parts.append({"mime_type": f.type if hasattr(f, 'type') else 'image/jpeg', "data": f.getvalue()})
-            elif target_url:
-                web_text = fetch_text_from_url(target_url)
-                if not web_text: st.error("URLエラー"); st.stop()
-                parts.append(prompt + f"\n\n{web_text[:30000]}")
-
-            resp = None
-            for _ in range(3):
-                try: resp = model.generate_content(parts); break
-                except exceptions.ResourceExhausted: time.sleep(5)
-                except: pass
-
-            if not resp: st.error("失敗しました"); st.stop()
-
-            text_resp = resp.text
-            start = text_resp.find('[')
-            end = text_resp.rfind(']') + 1
-            if start == -1: st.error("解析エラー"); st.stop()
-            menu_data = json.loads(text_resp[start:end])
-
-            intro_t = f"こんにちは、{store_name}です。"
-            if menu_title: intro_t += f"ただいまより{menu_title}をご紹介します。"
-            intro_t += "このプレイヤーは、スクリーンリーダーでの操作に対応しています。"
-            intro_t += f"このメニューは、全部で{len(menu_data)}つのカテゴリーに分かれています。まずは目次です。"
-            
-            for i, tr in enumerate(menu_data): 
-                intro_t += f"{i+1}、{tr['title']}。"
-                
-            intro_t += "それではどうぞ。"
-            menu_data.insert(0, {"title": "はじめに・目次", "text": intro_t})
-
-            progress_bar = st.progress(0)
-            st.info("音声を生成しています... (並列処理中)")
-            generated_tracks = asyncio.run(process_all_tracks_fast(menu_data, output_dir, voice_code, rate_value, progress_bar))
-
-            html_str = create_standalone_html_player(store_name, generated_tracks, map_url)
-            
-            d_str = datetime.now().strftime('%Y%m%d')
-            s_name = sanitize_filename(store_name)
-            zip_name = f"{s_name}_{d_str}.zip"
-            zip_path = os.path.abspath(zip_name)
-            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as z:
-                for root, dirs, files in os.walk(output_dir):
-                    for file in files: z.write(os.path.join(root, file), file)
-
-            with open(zip_path, "rb") as f:
-                zip_data = f.read()
-
-            st.session_state.generated_result = {
-                "zip_data": zip_data,
-                "zip_name": zip_name,
-                "html_content": html_str, 
-                "html_name": f"{s_name}_player.html",
-                "tracks": generated_tracks
-            }
-            st.balloons()
-        except Exception as e: st.error(f"エラー: {e}")
-
-if st.session_state.generated_result:
-    res = st.session_state.generated_result
-    st.divider()
-    st.subheader("▶️ プレビュー")
-    render_preview_player(res["tracks"])
-    st.divider()
-    st.subheader("📥 保存")
-    
-    st.info(
-        """
-        **Webプレイヤー**：アクセシビリティ対応済みのHTMLファイルです。スマホへの保存やLINE共有に便利です。  
-        **ZIPファイル**：PCでの保存や、My Menu Bookへの追加にご利用ください。
-        """
-    )
-    
-    c1, c2 = st.columns(2)
-    with c1: st.download_button(f"🌐 Webプレイヤー ({res['html_name']})", res['html_content'], res['html_name'], "text/html", type="primary")
-    with c2: st.download_button(f"📦 ZIPファイル ({res['zip_name']})", data=res["zip_data"], file_name=res['zip_name'], mime="application/zip")
+                    if is_new_photo:
+                        st.session_state.captured_images.append(camera_file)
+                        st.success("追加しました！次の写真を撮影してください。")
+                        time.sleep(
