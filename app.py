@@ -1,3 +1,14 @@
+状況がわかりました！
+「カメラのIDを固定」したことで、**一度撮った写真がカメラの中に残り続けてしまい、次のシャッターボタン（丸いボタン）が隠れてしまっている状態**です。
+
+これを解決するには、「追加して次を撮る」ボタンを押した瞬間に、\*\*プログラム側でカメラの中身を強制的にリセット（空にする）\*\*処理を加える必要があります。
+
+修正済みの **日本語版 `app.py` 全文** を作成しました。
+（`st.session_state["fixed_camera_key"] = None` というリセット処理を追加しています）
+
+これを上書きしてください。
+
+```python
 import streamlit as st
 import os
 import asyncio
@@ -321,7 +332,8 @@ elif input_method == "📷 その場で撮影":
             st.rerun()
     else:
         # ★カメラIDを固定して、リクエストループを防ぐ
-        cam = st.camera_input("撮影", key="fixed_camera_key")
+        cam_key = "fixed_camera_key"
+        cam = st.camera_input("撮影", key=cam_key)
         
         # 直前の画像と同じデータなら重複追加を防ぐ
         is_new = True
@@ -332,10 +344,13 @@ elif input_method == "📷 その場で撮影":
         if cam is not None:
             c1, c2 = st.columns(2)
             with c1:
-                # 追加ボタン（押すと保存してリラン）
+                # 追加ボタン（押すと保存してリセット）
                 if st.button("⬇️ 追加して次を撮る", type="primary", use_container_width=True):
                     if is_new:
                         st.session_state.captured_images.append(cam)
+                        # ★ここが重要：セッションステートからキーを削除してリセットする
+                        if cam_key in st.session_state:
+                            del st.session_state[cam_key]
                         st.toast("保存しました！次の写真を撮影してください。")
                         time.sleep(0.5) 
                         st.rerun()
@@ -367,6 +382,7 @@ elif input_method == "🌐 URL入力":
     target_url = st.text_input("URL", placeholder="https://...")
 
 # 画像一覧の表示
+# カメラ起動中は表示しない（または別枠で表示）設定
 images_to_show = final_image_list if input_method != "📷 その場で撮影" else (st.session_state.captured_images if not st.session_state.show_camera else [])
 
 if images_to_show:
@@ -478,3 +494,4 @@ if st.session_state.generated_result:
     c1, c2 = st.columns(2)
     with c1: st.download_button(f"🌐 Webプレイヤー ({res['html_name']})", res['html_content'], res['html_name'], "text/html", type="primary")
     with c2: st.download_button(f"📦 ZIPファイル ({res['zip_name']})", data=res["zip_data"], file_name=res['zip_name'], mime="application/zip")
+```
