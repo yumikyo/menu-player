@@ -78,7 +78,7 @@ async def process_all_tracks_fast(menu_data, output_dir, voice_code, rate_value,
         progress_bar.progress(completed / total)
     return track_info_list
 
-# HTMLプレイヤー生成（アクセシビリティ改善版）
+# HTMLプレイヤー生成
 def create_standalone_html_player(store_name, menu_data, map_url=""):
     playlist_js = []
     for track in menu_data:
@@ -89,7 +89,6 @@ def create_standalone_html_player(store_name, menu_data, map_url=""):
                 playlist_js.append({"title": track['title'], "src": f"data:audio/mp3;base64,{b64_data}"})
     playlist_json_str = json.dumps(playlist_js, ensure_ascii=False)
     
-    # 地図ボタンのHTML（role="button"を使用し、構造を修正）
     map_button_html = ""
     if map_url:
         map_button_html = f"""
@@ -100,7 +99,6 @@ def create_standalone_html_player(store_name, menu_data, map_url=""):
         </div>
         """
 
-    # HTMLテンプレート（アクセシビリティ強化）
     html_template = """<!DOCTYPE html>
 <html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>__STORE_NAME__ 音声メニュー</title>
 <style>
@@ -118,7 +116,6 @@ button:focus, .map-btn:focus, select:focus, .itm:focus{outline:3px solid #333; o
 .lst{border-top:1px solid #eee;padding-top:10px;}
 .itm{padding:15px;border-bottom:1px solid #eee;cursor:pointer; font-size:1.1em;}
 .itm:hover{background:#f9f9f9;}
-/* コントラスト比改善: アクティブ時は濃い赤文字に */
 .itm.active{background:#ffecec;color:#b71c1c;font-weight:bold;border-left:5px solid #ff4b4b;}
 .sr-only {position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
 </style></head>
@@ -126,19 +123,15 @@ button:focus, .map-btn:focus, select:focus, .itm:focus{outline:3px solid #333; o
 <main class="c" role="main">
     <h1>🎧 __STORE_NAME__</h1>
     __MAP_BUTTON__
-    
     <section aria-label="再生状況">
         <div class="box"><div class="ti" id="ti" aria-live="polite">Loading...</div></div>
     </section>
-    
     <audio id="au" style="width:100%" aria-label="メニュー読み上げプレイヤー"></audio>
-    
     <section class="ctrl" aria-label="再生コントロール">
         <button onclick="prev()" aria-label="前のチャプターへ">⏮</button>
         <button onclick="toggle()" id="pb" aria-label="再生">▶</button>
         <button onclick="next()" aria-label="次のチャプターへ">⏭</button>
     </section>
-    
     <div style="text-align:center;margin-bottom:20px;">
         <label for="sp" style="font-weight:bold; margin-right:5px;">読み上げ速度:</label>
         <select id="sp" onchange="csp()" style="font-size:1rem; padding:5px;">
@@ -148,7 +141,6 @@ button:focus, .map-btn:focus, select:focus, .itm:focus{outline:3px solid #333; o
             <option value="1.5">1.5 (速い)</option>
         </select>
     </div>
-    
     <h2>📜 チャプター一覧</h2>
     <div id="ls" class="lst" role="list" aria-label="メニューのチャプター一覧"></div>
 </main>
@@ -157,7 +149,6 @@ const pl=__PLAYLIST_JSON__;let idx=0;
 const au=document.getElementById('au');
 const ti=document.getElementById('ti');
 const pb=document.getElementById('pb');
-
 function init(){ren();ld(0);csp();}
 function ld(i){
     idx=i;
@@ -194,15 +185,10 @@ function prev(){
     }
 }
 function csp(){au.playbackRate=parseFloat(document.getElementById('sp').value);}
-
 au.onended=function(){
     if(idx<pl.length-1){ next(); }
-    else { 
-        pb.innerText="▶"; 
-        pb.setAttribute("aria-label", "再生");
-    }
+    else { pb.innerText="▶"; pb.setAttribute("aria-label", "再生");}
 };
-
 function ren(){
     const d=document.getElementById('ls');
     d.innerHTML="";
@@ -210,38 +196,22 @@ function ren(){
         const m=document.createElement('div');
         m.className="itm "+(i===idx?"active":"");
         m.setAttribute("role", "listitem");
-        m.setAttribute("tabindex", "0"); // キーボードフォーカス可能に
+        m.setAttribute("tabindex", "0");
         m.setAttribute("aria-label", (i+1)+"番、"+t.title);
         m.innerText=(i+1)+". "+t.title;
-        
-        // クリック時
-        m.onclick=()=>{
-            ld(i);
-            au.play();
-            pb.innerText="⏸";
-            pb.setAttribute("aria-label", "一時停止");
-        };
-        
-        // キーボード操作 (Enter or Space)
-        m.onkeydown=(e)=>{
-            if(e.key === 'Enter' || e.key === ' '){
-                e.preventDefault();
-                m.click();
-            }
-        };
+        m.onclick=()=>{ld(i);au.play();pb.innerText="⏸";pb.setAttribute("aria-label","一時停止");};
+        m.onkeydown=(e)=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();d.click();}};
         d.appendChild(m);
     });
 }
 init();
 </script></body></html>"""
-    
     final_html = html_template.replace("__STORE_NAME__", store_name)
     final_html = final_html.replace("__PLAYLIST_JSON__", playlist_json_str)
     final_html = final_html.replace("__MAP_BUTTON__", map_button_html)
-    
     return final_html
 
-# プレビュー用プレイヤー（簡易版だがアクセシビリティ考慮）
+# プレビュー用プレイヤー
 def render_preview_player(tracks):
     playlist_data = []
     for track in tracks:
@@ -250,7 +220,6 @@ def render_preview_player(tracks):
                 b64 = base64.b64encode(f.read()).decode()
                 playlist_data.append({"title": track['title'],"src": f"data:audio/mp3;base64,{b64}"})
     playlist_json = json.dumps(playlist_data)
-    
     html_template = """<!DOCTYPE html><html><head><style>
     body{margin:0;padding:0;font-family:sans-serif;}
     .p-box{border:2px solid #e0e0e0;border-radius:12px;padding:15px;background:#fcfcfc;text-align:center;}
@@ -319,11 +288,13 @@ with st.sidebar:
     voice_options = {"女性（七海）": "ja-JP-NanamiNeural", "男性（慶太）": "ja-JP-KeitaNeural"}
     selected_voice = st.selectbox("声の種類", list(voice_options.keys()))
     voice_code = voice_options[selected_voice]
-    rate_value = "+23%" # 少し聞き取りやすく速度を調整
+    rate_value = "+10%"
 
 st.title("🎧 Menu Player Generator")
 st.caption("視覚障がいのある方のための、アクセシビリティに配慮した音声メニューを作成します。")
 
+# 【追加】再撮影する画像のインデックスを保持するstate
+if 'retake_index' not in st.session_state: st.session_state.retake_index = None
 if 'captured_images' not in st.session_state: st.session_state.captured_images = []
 if 'camera_key' not in st.session_state: st.session_state.camera_key = 0
 if 'generated_result' not in st.session_state: st.session_state.generated_result = None
@@ -335,7 +306,6 @@ c1, c2 = st.columns(2)
 with c1: store_name = st.text_input("🏠 店舗名（必須）", placeholder="例：カフェタナカ")
 with c2: menu_title = st.text_input("📖 今回のメニュー名 （任意）", placeholder="例：ランチ")
 
-# 地図URL入力欄
 map_url = st.text_input("📍 GoogleマップのURL（任意）", placeholder="例：https://maps.app.goo.gl/...")
 if map_url:
     st.caption("※プレイヤーに地図へのアクセスボタンが表示されます。")
@@ -353,10 +323,39 @@ if input_method == "📂 アルバムから":
     if uploaded_files: final_image_list.extend(uploaded_files)
 
 elif input_method == "📷 その場で撮影":
-    if not st.session_state.show_camera:
+    # --- 【修正】再撮影モードの処理 ---
+    if st.session_state.retake_index is not None:
+        target_idx = st.session_state.retake_index
+        st.warning(f"No.{target_idx + 1} の画像を再撮影中...")
+        
+        # 再撮影用のカメラキー（キャッシュ対策）
+        retake_camera_key = f"retake_camera_{target_idx}_{st.session_state.camera_key}"
+        camera_file = st.camera_input("撮影 (取り直し)", key=retake_camera_key)
+
+        c1, c2 = st.columns(2)
+        with c1:
+            if camera_file:
+                if st.button("✅ これで決定", type="primary", key="retake_confirm"):
+                    # リストの指定位置を上書き
+                    st.session_state.captured_images[target_idx] = camera_file
+                    # 状態をリセット
+                    st.session_state.retake_index = None
+                    st.session_state.show_camera = False 
+                    st.session_state.camera_key += 1 # キーを更新してキャッシュクリア
+                    st.rerun()
+        with c2:
+            if st.button("❌ キャンセル", key="retake_cancel"):
+                st.session_state.retake_index = None
+                st.session_state.show_camera = False
+                st.rerun()
+
+    # --- 通常撮影モード（カメラ未起動） ---
+    elif not st.session_state.show_camera:
         if st.button("📷 カメラ起動", type="primary"):
             st.session_state.show_camera = True
             st.rerun()
+            
+    # --- 通常撮影モード（カメラ起動中） ---
     else:
         camera_file = st.camera_input("撮影", key=f"camera_{st.session_state.camera_key}")
         if camera_file:
@@ -367,27 +366,42 @@ elif input_method == "📷 その場で撮影":
         if st.button("❌ 閉じる"):
             st.session_state.show_camera = False
             st.rerun()
+            
+    # 撮影済みリストへの追加
     if st.session_state.captured_images:
-        if st.button("🗑️ 全て削除"):
-            st.session_state.captured_images = []
-            st.rerun()
+        if st.session_state.retake_index is None and st.session_state.show_camera is False:
+             if st.button("🗑️ 全て削除"):
+                st.session_state.captured_images = []
+                st.rerun()
         final_image_list.extend(st.session_state.captured_images)
 
 elif input_method == "🌐 URL入力":
     target_url = st.text_input("URL", placeholder="https://...")
 
-if input_method == "📂 アルバムから" and final_image_list:
+# プレビュー表示（再撮影モード中は非表示）
+if final_image_list and st.session_state.retake_index is None:
     st.markdown("###### ▼ 画像確認")
-    cols_per_row = 5
+    cols_per_row = 3
     for i in range(0, len(final_image_list), cols_per_row):
         cols = st.columns(cols_per_row)
         batch = final_image_list[i:i+cols_per_row]
         for j, img in enumerate(batch):
-            with cols[j]: st.image(img, caption=f"No.{i+j+1}", use_container_width=True)
+            global_idx = i + j
+            with cols[j]:
+                st.image(img, caption=f"No.{global_idx+1}", use_container_width=True)
+                # 【追加】カメラ撮影モードで、かつ撮影済み画像の場合に「取り直す」ボタンを表示
+                if input_method == "📷 その場で撮影" and img in st.session_state.captured_images:
+                    if st.button("🔄 取り直す", key=f"btn_retake_{global_idx}"):
+                        st.session_state.retake_index = global_idx
+                        st.session_state.show_camera = True
+                        st.rerun()
+
 st.markdown("---")
 
 st.markdown("### 3. 音声メニューの作成")
-if st.button("🎙️ 作成開始", type="primary", use_container_width=True):
+# 再撮影中は作成ボタンを押せないようにする
+disable_create = st.session_state.retake_index is not None
+if st.button("🎙️ 作成開始", type="primary", use_container_width=True, disabled=disable_create):
     if not (api_key and target_model_name and store_name):
         st.error("設定や店舗名を確認してください"); st.stop()
     if not (final_image_list or target_url):
@@ -402,7 +416,6 @@ if st.button("🎙️ 作成開始", type="primary", use_container_width=True):
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel(target_model_name)
             parts = []
-            # プロンプトの修正：読み上げルールの厳格化
             prompt = """
             あなたは視覚障害者のためのメニュー読み上げデータ作成のプロです。
             メニューの内容を解析し、聞きやすいように【5つ〜8つ程度の大きなカテゴリー】に分類してまとめてください。
@@ -456,7 +469,6 @@ if st.button("🎙️ 作成開始", type="primary", use_container_width=True):
             st.info("音声を生成しています... (並列処理中)")
             generated_tracks = asyncio.run(process_all_tracks_fast(menu_data, output_dir, voice_code, rate_value, progress_bar))
 
-            # HTML作成
             html_str = create_standalone_html_player(store_name, generated_tracks, map_url)
             
             d_str = datetime.now().strftime('%Y%m%d')
