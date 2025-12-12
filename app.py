@@ -204,7 +204,7 @@ if 'show_camera' not in st.session_state: st.session_state.show_camera = False
 st.markdown("### 1. お店情報の入力")
 c1, c2 = st.columns(2)
 with c1: store_name = st.text_input("🏠 店舗名（必須）", placeholder="例：カフェタナカ")
-with c2: menu_title = st.text_input("📖 今回のメニュー名", placeholder="例：ランチ")
+with c2: menu_title = st.text_input("📖 今回のメニュー名 （任意）", placeholder="例：ランチ")
 
 # 地図URL入力欄を追加
 map_url = st.text_input("📍 GoogleマップのURL（任意）", placeholder="例：https://maps.app.goo.gl/...")
