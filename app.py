@@ -33,6 +33,19 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# --- 辞書ファイルの管理 ---
+DICT_FILE = "my_dictionary.json"
+
+def load_dictionary():
+    if os.path.exists(DICT_FILE):
+        with open(DICT_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+def save_dictionary(new_dict):
+    with open(DICT_FILE, "w", encoding="utf-8") as f:
+        json.dump(new_dict, f, ensure_ascii=False, indent=2)
+
 # --- 関数定義 ---
 def sanitize_filename(name):
     return re.sub(r'[\\/*?:"<>|]', "", name).replace(" ", "_").replace("　", "_")
@@ -76,7 +89,6 @@ async def process_all_tracks_fast(menu_data, output_dir, voice_code, rate_value,
         save_path = os.path.join(output_dir, filename)
         speech_text = track['text']
         
-        # 【修正】番号付けのロジック
         # i=0 (はじめに) は番号なし
         # i=1 (最初の料理) を「1番」とする
         if i > 0: 
@@ -225,7 +237,6 @@ function ren(){
         m.setAttribute("role", "listitem");
         m.setAttribute("tabindex", "0");
         
-        // 【修正】リスト表示の番号付け
         let label = t.title;
         if(i > 0){ label = i + ". " + t.title; }
         
@@ -325,6 +336,37 @@ with st.sidebar:
     selected_voice = st.selectbox("声の種類", list(voice_options.keys()))
     voice_code = voice_options[selected_voice]
     rate_value = "+10%"
+
+    # --- 辞書機能 (Sidebar) ---
+    st.divider()
+    st.subheader("📖 辞書登録")
+    st.caption("よく間違える読み方を登録すると、AIが学習します。(例: 豚肉 -> ぶたにく)")
+    
+    # 辞書のロード
+    user_dict = load_dictionary()
+    
+    # 新規登録
+    with st.form("dict_form", clear_on_submit=True):
+        c_word, c_read = st.columns(2)
+        new_word = c_word.text_input("単語", placeholder="例: 辛口")
+        new_read = c_read.text_input("読み", placeholder="例: からくち")
+        if st.form_submit_button("➕ 追加"):
+            if new_word and new_read:
+                user_dict[new_word] = new_read
+                save_dictionary(user_dict)
+                st.success(f"「{new_word}」を登録しました！")
+                st.rerun()
+
+    # 登録済みリスト（削除機能）
+    if user_dict:
+        with st.expander(f"登録済み単語 ({len(user_dict)})"):
+            for word, read in list(user_dict.items()):
+                c1, c2 = st.columns([3, 1])
+                c1.text(f"{word} ➡ {read}")
+                if c2.button("🗑️", key=f"del_{word}"):
+                    del user_dict[word]
+                    save_dictionary(user_dict)
+                    st.rerun()
 
 st.title("🎧 Menu Player Generator")
 st.caption("視覚障がいのある方のための、アクセシビリティに配慮した音声メニューを作成します。")
@@ -456,7 +498,11 @@ if st.button("🎙️ 作成開始", type="primary", use_container_width=True, d
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel(target_model_name)
             parts = []
-            prompt = """
+            
+            # 辞書データの取得とJSON文字列化
+            user_dict_str = json.dumps(user_dict, ensure_ascii=False)
+            
+            prompt = f"""
             あなたは視覚障害者のためのメニュー読み上げデータ作成のプロです。
             メニューの内容を解析し、聞きやすいように【5つ〜8つ程度の大きなカテゴリー】に分類してまとめてください。
             
@@ -466,11 +512,14 @@ if st.button("🎙️ 作成開始", type="primary", use_container_width=True, d
             3. カテゴリー内のメニューは、挨拶などを抜きにして商品名と価格をテンポよく読み上げる文章にする。
             4. 価格の数字には必ず「円」をつけて読み上げる（例：1000 -> 1000円）。
             5. アレルギー、辛さ、量などの重要な注意書きは、省略せず商品名の後に補足して読み上げる。
+            
+            ★重要：以下の固有名詞・読み方辞書を必ず守ってください。
+            {user_dict_str}
 
             出力フォーマット（JSONのみ）:
             [
-              {"title": "カテゴリー名（例：前菜・サラダ）", "text": "読み上げ文（例：まずは前菜です。シーザーサラダ800円。ポテトサラダ500円。なお、ドレッシングは別添え可能です。）"},
-              {"title": "カテゴリー名（例：メイン料理）", "text": "読み上げ文（例：続いてメインです。ハンバーグ定食1200円。ステーキ1500円。ご飯の大盛りは無料です。）"}
+              {{"title": "カテゴリー名（例：前菜・サラダ）", "text": "読み上げ文（例：まずは前菜です。シーザーサラダ800円。ポテトサラダ500円。なお、ドレッシングは別添え可能です。）"}},
+              {{"title": "カテゴリー名（例：メイン料理）", "text": "読み上げ文（例：続いてメインです。ハンバーグ定食1200円。ステーキ1500円。ご飯の大盛りは無料です。）"}}
             ]
             """
             
@@ -503,7 +552,6 @@ if st.button("🎙️ 作成開始", type="primary", use_container_width=True, d
             intro_t += "このプレイヤーは、スクリーンリーダーでの操作に対応しています。"
             intro_t += f"このメニューは、全部で{len(menu_data)}つのカテゴリーに分かれています。まずは目次です。"
             
-            # 目次の読み上げ: i=0 (1つ目のカテゴリ) -> "1番、〇〇"
             for i, tr in enumerate(menu_data): 
                 intro_t += f"{i+1}、{tr['title']}。"
                 
