@@ -384,15 +384,28 @@ elif input_method == "📷 その場で撮影":
             st.rerun()
             
     else:
+        # カメラ起動中
         camera_file = st.camera_input("撮影", key=f"camera_{st.session_state.camera_key}")
+        
         if camera_file:
-            if st.button("⬇️ 追加して次を撮る", type="primary"):
-                st.session_state.captured_images.append(camera_file)
-                st.session_state.camera_key += 1
+            # 写真が撮られた状態：2つの選択肢を表示
+            c_btn1, c_btn2 = st.columns(2)
+            with c_btn1:
+                if st.button("⬇️ 追加して次を撮る", type="primary", use_container_width=True):
+                    st.session_state.captured_images.append(camera_file)
+                    st.session_state.camera_key += 1
+                    st.rerun()
+            with c_btn2:
+                if st.button("✅ 追加して終了", type="primary", use_container_width=True):
+                    st.session_state.captured_images.append(camera_file)
+                    st.session_state.show_camera = False # カメラを閉じる
+                    st.session_state.camera_key += 1
+                    st.rerun()
+        else:
+            # まだ撮っていない状態：中止ボタンのみ
+            if st.button("❌ 撮影を中止", use_container_width=True):
+                st.session_state.show_camera = False
                 st.rerun()
-        if st.button("❌ 閉じる"):
-            st.session_state.show_camera = False
-            st.rerun()
             
     if st.session_state.captured_images:
         if st.session_state.retake_index is None and st.session_state.show_camera is False:
