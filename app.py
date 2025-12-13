@@ -394,13 +394,23 @@ final_image_list = []
 target_url = None
 
 if input_method == "🖼️ 画像 (撮影・アルバム)":
-    st.info("下のボタンから画像をアップロードしてください。スマホの場合は「写真を撮る」または「ライブラリ」を選択できます。")
-    # accept_multiple_files=Trueにより、複数枚を一括で、または連続して追加可能
-    uploaded_files = st.file_uploader("メニュー画像を選択・撮影", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True)
+    st.info("下のボタンを押し、「カメラ」または「ファイル」を選択してください。")
+    
+    # 【修正箇所】type制限を外しました。これでAndroid等でもカメラ選択肢が出やすくなります。
+    uploaded_files = st.file_uploader("画像をアップロード", accept_multiple_files=True)
     
     if uploaded_files:
-        final_image_list = uploaded_files
-        st.success(f"{len(uploaded_files)} 枚の画像が選択されています。")
+        # 画像ファイルだけをフィルタリングして読み込む（PDFなどが混ざらないように念のため確認）
+        valid_images = []
+        for file in uploaded_files:
+            if file.type.startswith('image/'):
+                valid_images.append(file)
+        
+        if valid_images:
+            final_image_list = valid_images
+            st.success(f"{len(valid_images)} 枚の画像を読み込みました")
+        else:
+            st.warning("画像ファイルが選択されていません。")
 
 elif input_method == "🌐 URL入力":
     target_url = st.text_input("URL", placeholder="https://...")
