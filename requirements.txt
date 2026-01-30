@@ -6,3 +6,5 @@ gTTS
 nest_asyncio
 Pillow
 requests
+pandas
+thefuzz
