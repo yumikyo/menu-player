@@ -1,27 +1,38 @@
 # React チャット表示崩れの修正（Gemini 出力）
 
-症状（スクリーンショットの状態）:
+> 「まだエラーが出る」場合の、**実運用で壊れにくい方法**をまとめています。
 
-- `###` が見出しとして解釈されず、そのまま表示される
-- `**bold**` がそのまま表示される
-- `\bar{x}` などの LaTeX が文字列のまま表示される
+## まず結論（よい方法）
 
-原因:
+一番安定するのは次の2段構えです。
 
-現在の実装は `dangerouslySetInnerHTML` で **改行・`$...$`・`[...]` だけ** 置換しています。
-そのため Markdown (`###`, `**`, 箇条書き) はパースされません。
+1. **AIには“表示用Markdown”だけ返させる**（HTML禁止）
+2. **フロント側で正規化 → Markdown/Mathレンダリング**する
 
-## 推奨修正
+これで `###` / `**` / 箇条書き / LaTeX の崩れをかなり防げます。
 
-Markdown と数式を正式にレンダリングしてください。
+---
 
-### 1) パッケージ追加
+## なぜまだ崩れるのか
+
+以前の修正案は方向性として正しいですが、実際には次の入力揺れで壊れます。
+
+- AIが `\( ... \)` や `\[ ... \]` を返す（`$...$` ではない）
+- AIがコードフェンス ```markdown ... ``` を混ぜる
+- AIが `<br>` や `<b>` などのHTMLを混ぜる
+- `\bar{x}` のような式を **数式デリミタなし** で返す
+
+この状態だと `react-markdown + rehype-katex` を入れても表示が不安定になります。
+
+---
+
+## 推奨実装（そのまま使える）
+
+### 1) 依存関係
 
 ```bash
 npm i react-markdown remark-gfm remark-math rehype-katex katex
 ```
-
-### 2) レンダラーを追加
 
 ```jsx
 import ReactMarkdown from 'react-markdown';
@@ -29,45 +40,116 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
+```
 
+### 2) 受信テキスト正規化（重要）
+
+```jsx
+const normalizeTutorText = (raw = '') => {
+  let t = String(raw);
+
+  // 1) コードフェンス除去
+  t = t.replace(/^```(?:markdown|md)?\s*/i, '').replace(/```\s*$/i, '');
+
+  // 2) 危険/不要HTMLを無効化（タグを文字として扱う）
+  t = t.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  // 3) Math delimiters を統一: \(...\) -> $...$, \[...\] -> $$...$$
+  t = t
+    .replace(/\\\((.*?)\\\)/gs, (_, m) => `$${m}$`)
+    .replace(/\\\[(.*?)\\\]/gs, (_, m) => `$$${m}$$`);
+
+  // 4) 式だけ裸で来るケースの軽い救済（必要ならON）
+  // 例: \bar{x} : The mean -> $\bar{x}$ : The mean
+  t = t.replace(/(^|\s)(\\[a-zA-Z]+\{[^}]*\})(?=\s*[:：])/g, '$1$$$2$$');
+
+  return t.trim();
+};
+```
+
+### 3) メッセージ描画
+
+```jsx
 function TutorMessage({ content }) {
+  const normalized = normalizeTutorText(content);
+
   return (
-    <div className="prose prose-slate max-w-none text-sm md:text-base leading-relaxed prose-headings:my-2 prose-p:my-2 prose-li:my-1">
+    <div className="prose prose-slate max-w-none text-sm md:text-base leading-relaxed">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex]}
+        skipHtml
       >
-        {content}
+        {normalized}
       </ReactMarkdown>
     </div>
   );
 }
 ```
 
-### 3) 既存の `dangerouslySetInnerHTML` を置き換え
+> `skipHtml` を有効にしておくと、AIがHTMLを混ぜてもそのまま解釈しません。
 
-以下を:
+### 4) 既存差し替え
 
 ```jsx
+// before
 <div dangerouslySetInnerHTML={{ __html: ... }} />
-```
 
-以下に変更:
-
-```jsx
+// after
 <TutorMessage content={msg.content} />
 ```
 
-## 補足（今の実装が崩れる理由）
+---
 
-- `replace(/\n/g, '<br>')` は改行しか処理しない
-- `replace(/\$(.*?)\$/g, ...)` はインライン `$...$` にしか対応しない
-- Markdown 記法を HTML へ変換していないため `###` や `**` が素通り
-- 文字列置換ベースは XSS/表示崩れの温床になりやすい
+## プロンプト側も固定する（かなり効く）
 
-## 追加の安定化ポイント
+`systemPrompt` に以下を追加してください。
 
-- Gemini 側の system prompt に「Markdown + LaTeX で返す」ことを明記
-- 数式は `$...$`（インライン）と `$$...$$`（ブロック）を使わせる
-- 角括弧タグ `[EXPLAIN]` は Markdown 上で強調に変える（例: `**[EXPLAIN]**`）
+```text
+Output format rules (MUST):
+- Use Markdown only. Do NOT output any HTML tags.
+- Use LaTeX only inside $...$ (inline) or $$...$$ (block).
+- Never use \( \) or \[ \].
+- Do not wrap the answer in code fences.
+```
+
+---
+
+## さらに安定させる最善策（本命）
+
+長期運用は、自由文ではなく**構造化レスポンス**にするのが最強です。
+
+例：AIからJSONで返す
+
+```json
+{
+  "sections": [
+    {"type": "heading", "text": "Measures of Central Tendency"},
+    {"type": "paragraph", "text": "In statistics..."},
+    {"type": "math", "display": false, "latex": "\\bar{x}=\\frac{\\sum x_i}{n}"}
+  ]
+}
+```
+
+UI側で `type` ごとに安全に描画すれば、Markdown崩れ・HTML混入・正規表現事故を避けられます。
+
+---
+
+## うまくいっているかのチェック項目
+
+- `### Heading` が見出しとして表示される
+- `**bold**` が太字になる
+- `$\\bar{x}$` が数式として表示される
+- `$$...$$` のブロック数式が改行されて表示される
+- AIが `<b>` を返してもHTMLとしては解釈されない
+
+---
+
+## それでも崩れる場合の切り分け
+
+1. `console.log(raw)` と `console.log(normalized)` を比較
+2. `normalized` に `$...$` / `$$...$$` が残っているか確認
+3. CSSで `.katex` が `display:none` になっていないか確認
+4. `import 'katex/dist/katex.min.css'` が読み込まれているか確認
+5. `rehype-katex` が `ReactMarkdown` に渡っているか確認
 
